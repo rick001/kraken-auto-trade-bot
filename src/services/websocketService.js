@@ -250,8 +250,8 @@ class WebSocketService {
             ledgerId: update.ledger_id
           });
           
-          // Emit individual balance update event
-          this.emit('balanceUpdate', { [update.asset]: update.balance.toString() }, false);
+          // Emit individual balance update event with full update information
+          this.emit('balanceUpdate', { [update.asset]: update.balance.toString() }, false, update);
           
           // If it's a deposit, emit deposit event
           if (update.type === 'deposit' && update.amount > 0) {

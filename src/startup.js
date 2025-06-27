@@ -69,8 +69,8 @@ async function startServices() {
 
     // Wire up WebSocket event handlers
     logger.info('🔌 Setting up WebSocket event handlers...');
-    websocketService.onBalanceUpdate = async (balances, isSnapshot) => {
-      await autoSellService.handleBalanceUpdate(balances, isSnapshot);
+    websocketService.onBalanceUpdate = async (balances, isSnapshot, updateInfo) => {
+      await autoSellService.handleBalanceUpdate(balances, isSnapshot, updateInfo);
     };
     websocketService.onDeposit = async (asset, amount) => {
       await autoSellService.handleDeposit(asset, amount);

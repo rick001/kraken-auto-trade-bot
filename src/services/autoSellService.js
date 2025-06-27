@@ -48,7 +48,7 @@ class AutoSellService {
   }
 
   // Handle balance updates (both snapshot and real-time)
-  async handleBalanceUpdate(balances, isSnapshot = false) {
+  async handleBalanceUpdate(balances, isSnapshot = false, updateInfo = null) {
     if (this.isProcessingSnapshot && isSnapshot) {
       logger.debug('Already processing snapshot, skipping');
       return;
@@ -82,7 +82,7 @@ class AutoSellService {
           });
         }
 
-        await this.processBalanceChange(asset, oldAmount, newAmount, isSnapshot, logData);
+        await this.processBalanceChange(asset, oldAmount, newAmount, isSnapshot, logData, updateInfo);
       }
     }
 
@@ -100,14 +100,14 @@ class AutoSellService {
       }
     }
 
-    // Send log to API if enabled
-    if (config.logging.api.enabled) {
+    // Send log to API if enabled - only for snapshots, not for individual updates
+    if (config.logging.api.enabled && isSnapshot) {
       await sendLogToApi(logData);
     }
   }
 
   // Process individual balance changes
-  async processBalanceChange(asset, oldAmount, newAmount, isSnapshot, logData) {
+  async processBalanceChange(asset, oldAmount, newAmount, isSnapshot, logData, updateInfo) {
     const convertedAsset = convertAssetName(asset);
     const depositAmount = newAmount - oldAmount;
     let saleTriggered = false;
@@ -136,12 +136,12 @@ class AutoSellService {
         try {
           await sendLogToApi({
             eventType: 'deposit',
-            timestamp: new Date().toISOString(),
+            timestamp: updateInfo?.timestamp || new Date().toISOString(),
             asset: convertedAsset,
             amount: depositAmount,
             balance: newAmount,
-            ledgerId: logData?.ledgerId || null,
-            refId: logData?.refId || null
+            ledgerId: updateInfo?.ledger_id || null,
+            refId: updateInfo?.ref_id || null
           });
         } catch (err) {
           logger.error('Failed to send deposit log to API', { error: err.message });
