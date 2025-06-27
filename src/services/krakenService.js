@@ -29,19 +29,127 @@ class KrakenService {
         const pairsResp = await this.kraken.api('AssetPairs');
         this.pairs = pairsResp.result;
         
-        for (const pairInfo of Object.values(this.pairs)) {
-          if (pairInfo.base && pairInfo.quote === config.kraken.targetFiat && pairInfo.ordermin) {
+        // Build minimum order sizes mapping for ALL pairs (legacy method)
+        for (const [pairName, pairInfo] of Object.entries(this.pairs)) {
+          // Convert target fiat to Kraken format for comparison
+          const krakenTargetFiat = this.getOriginalAssetName(config.kraken.targetFiat);
+          
+          if (pairInfo.base && pairInfo.quote === krakenTargetFiat && pairInfo.ordermin) {
+            // Convert Kraken asset name back to standard name for storage
+            const standardAssetName = this.getStandardAssetName(pairInfo.base);
+            this.minimumOrderSizes[standardAssetName] = parseFloat(pairInfo.ordermin);
+            
+            // Also store with original Kraken name as backup
             this.minimumOrderSizes[pairInfo.base] = parseFloat(pairInfo.ordermin);
+            
+            logger.debug(`Stored minimum order size for ${standardAssetName} (${pairInfo.base}): ${pairInfo.ordermin}`);
           }
+        }
+        
+        // Debug: Log all XDG pairs to see what's actually available
+        const allXDGPairs = Object.keys(this.pairs).filter(p => p.includes('XDG'));
+        logger.info('All XDG pairs from Kraken API:', allXDGPairs);
+        
+        // Debug: Check for any USD pairs that might be DOGE-related
+        const allUSDPairs = Object.keys(this.pairs).filter(p => p.endsWith('USD'));
+        const dogeRelatedUSDPairs = allUSDPairs.filter(p => p.includes('XDG') || p.includes('DOGE'));
+        logger.info('All USD pairs:', allUSDPairs.slice(0, 20));
+        logger.info('DOGE/XDG related USD pairs:', dogeRelatedUSDPairs);
+        
+        // Debug: Check what pairs are available for XXDG specifically
+        const xxdgPairs = Object.keys(this.pairs).filter(p => p.startsWith('XXDG'));
+        logger.info('All XXDG pairs:', xxdgPairs);
+        
+        // Debug: Check what pairs are available for ZUSD specifically
+        const zusdPairs = Object.keys(this.pairs).filter(p => p.endsWith('ZUSD'));
+        logger.info('All ZUSD pairs:', zusdPairs.slice(0, 10));
+        
+        // Debug: Check for XXDGZUSD specifically
+        const xxdgzusdPair = this.pairs['XXDGZUSD'];
+        if (xxdgzusdPair) {
+          logger.info('XXDGZUSD pair found:', xxdgzusdPair);
+        } else {
+          logger.warn('XXDGZUSD pair NOT found in available pairs');
+        }
+        
+        // Debug: Check XDGUSD pair specifically
+        const xdgusdPair = this.pairs['XDGUSD'];
+        if (xdgusdPair) {
+          logger.info('XDGUSD pair found:', {
+            base: xdgusdPair.base,
+            quote: xdgusdPair.quote,
+            ordermin: xdgusdPair.ordermin,
+            minimum: this.minimumOrderSizes['DOGE'],
+            minimumXXDG: this.minimumOrderSizes['XXDG']
+          });
+        } else {
+          logger.warn('XDGUSD pair NOT found in available pairs');
         }
         
         logger.info('Tradable pairs and minimum order sizes loaded', {
           pairCount: Object.keys(this.pairs).length,
           minimumOrderSizesCount: Object.keys(this.minimumOrderSizes).length,
-          minimumOrderSizes: this.minimumOrderSizes
+          minimumOrderSizes: this.minimumOrderSizes,
+          availablePairs: Object.keys(this.pairs).slice(0, 20), // Show first 20 pairs
+          targetFiat: config.kraken.targetFiat,
+          dogePairs: Object.keys(this.pairs).filter(p => p.includes('DOGE')), // Show all DOGE pairs
+          xdgPairs: Object.keys(this.pairs).filter(p => p.includes('XDG')), // Show all XDG pairs
+          xdgPairsCaseInsensitive: Object.keys(this.pairs).filter(p => p.toLowerCase().includes('xdg')), // Case insensitive
+          allPairsWithUSD: Object.keys(this.pairs).filter(p => p.includes('USD') && (p.includes('XDG') || p.includes('DOGE'))), // All DOGE/XDG USD pairs
+          solPairs: Object.keys(this.pairs).filter(p => p.includes('SOL')), // Show all SOL pairs
+          btcPairs: Object.keys(this.pairs).filter(p => p.includes('XBT') || p.includes('BTC')), // Show all BTC pairs
+          usdPairs: Object.keys(this.pairs).filter(p => p.endsWith('USD')).slice(0, 10) // Show first 10 USD pairs
         });
       },
       'FetchTradablePairs'
+    );
+  }
+
+  // Fetch minimum order sizes only for specific assets (optimized)
+  async fetchMinimumOrderSizesForAssets(assets) {
+    return withRetry(
+      async () => {
+        await this.rateLimiter.waitForSlot();
+        const pairsResp = await this.kraken.api('AssetPairs');
+        this.pairs = pairsResp.result;
+        
+        // Convert target fiat to Kraken format for comparison
+        const krakenTargetFiat = this.getOriginalAssetName(config.kraken.targetFiat);
+        
+        // Only process minimum order sizes for assets we have
+        for (const asset of assets) {
+          // Skip target fiat currency
+          if (asset === config.kraken.targetFiat) {
+            continue;
+          }
+          
+          // Convert asset to Kraken format for pair lookup
+          const krakenAsset = this.getOriginalAssetName(asset);
+          
+          // Look for pairs that match our asset and target fiat
+          for (const [pairName, pairInfo] of Object.entries(this.pairs)) {
+            if (pairInfo.base === krakenAsset && pairInfo.quote === krakenTargetFiat && pairInfo.ordermin) {
+              // Convert Kraken asset name back to standard name for storage
+              const standardAssetName = this.getStandardAssetName(pairInfo.base);
+              this.minimumOrderSizes[standardAssetName] = parseFloat(pairInfo.ordermin);
+              
+              // Also store with original Kraken name as backup
+              this.minimumOrderSizes[pairInfo.base] = parseFloat(pairInfo.ordermin);
+              
+              logger.debug(`Stored minimum order size for ${standardAssetName} (${pairInfo.base}): ${pairInfo.ordermin}`);
+              break; // Found the pair, no need to continue searching
+            }
+          }
+        }
+        
+        logger.info('Minimum order sizes loaded for account assets', {
+          assetCount: assets.length,
+          minimumOrderSizesCount: Object.keys(this.minimumOrderSizes).length,
+          minimumOrderSizes: this.minimumOrderSizes,
+          targetFiat: config.kraken.targetFiat
+        });
+      },
+      'FetchMinimumOrderSizesForAssets'
     );
   }
 
@@ -169,14 +277,140 @@ class KrakenService {
 
   // Check if asset has a market pair
   hasMarketPair(asset) {
-    const pairName = `${asset}${config.kraken.targetFiat}`;
-    return !!this.pairs[pairName];
+    // Try different pair name formats for Kraken
+    // Use pair names (not asset names) for pair lookups
+    const pairAsset = this.getPairName(asset);
+    const pairQuote = this.getPairName(config.kraken.targetFiat);
+    
+    const pairNames = [
+      `${asset}${config.kraken.targetFiat}`, // SOLUSD
+      `${asset}USD`, // SOLUSD (most common)
+      `${asset}USDT`, // SOLUSDT (alternative)
+      `${asset}USDC`, // SOLUSDC (alternative)
+      `${pairAsset}${config.kraken.targetFiat}`, // XDGUSD (for DOGE)
+      `${pairAsset}USD`, // XDGUSD (for DOGE)
+      `${pairAsset}USDT`, // XDGUSDT (for DOGE)
+      `${pairAsset}USDC`, // XDGUSDC (for DOGE)
+      `${pairAsset}${pairQuote}`, // XDGUSD (for DOGE with converted USD)
+      `${asset}${pairQuote}` // DOGEUSD (for DOGE with converted USD)
+    ];
+    
+    const hasPair = pairNames.some(pairName => !!this.pairs[pairName]);
+    const foundPair = pairNames.find(pairName => !!this.pairs[pairName]);
+    
+    logger.debug(`Checking market pair for ${asset}`, {
+      asset,
+      pairAsset,
+      targetFiat: config.kraken.targetFiat,
+      pairQuote,
+      triedPairs: pairNames,
+      hasPair,
+      foundPair,
+      availablePairs: Object.keys(this.pairs).filter(p => p.includes(asset) || p.includes(pairAsset)).slice(0, 5)
+    });
+    return hasPair;
   }
 
   // Get market pair name for an asset
   getMarketPair(asset) {
-    const pairName = `${asset}${config.kraken.targetFiat}`;
-    return this.pairs[pairName] ? pairName : null;
+    // Try different pair name formats for Kraken
+    // Use pair names (not asset names) for pair lookups
+    const pairAsset = this.getPairName(asset);
+    const pairQuote = this.getPairName(config.kraken.targetFiat);
+    
+    const pairNames = [
+      `${asset}${config.kraken.targetFiat}`, // SOLUSD
+      `${asset}USD`, // SOLUSD (most common)
+      `${asset}USDT`, // SOLUSDT (alternative)
+      `${asset}USDC`, // SOLUSDC (alternative)
+      `${pairAsset}${config.kraken.targetFiat}`, // XDGUSD (for DOGE)
+      `${pairAsset}USD`, // XDGUSD (for DOGE)
+      `${pairAsset}USDT`, // XDGUSDT (for DOGE)
+      `${pairAsset}USDC`, // XDGUSDC (for DOGE)
+      `${pairAsset}${pairQuote}`, // XDGUSD (for DOGE with converted USD)
+      `${asset}${pairQuote}` // DOGEUSD (for DOGE with converted USD)
+    ];
+    
+    const foundPair = pairNames.find(pairName => !!this.pairs[pairName]);
+    return foundPair || null;
+  }
+
+  // Get original Kraken asset name from converted name
+  getOriginalAssetName(asset) {
+    const reverseConversions = {
+      'ETH': 'XETH',
+      'BTC': 'XXBT',
+      'DOGE': 'XXDG',
+      'USD': 'ZUSD',
+      'USDT': 'USDT',
+      'USDC': 'USDC',
+      'EUR': 'ZEUR',
+      'GBP': 'ZGBP',
+      'CAD': 'ZCAD',
+      'AUD': 'ZAUD',
+      'JPY': 'ZJPY',
+      'CHF': 'CHF',
+      'XRP': 'XXRP',
+      'XLM': 'XXLM',
+      'XMR': 'XXMR',
+      'LTC': 'XLTC',
+      'ETC': 'XETC',
+      'REP': 'XREP',
+      'MLN': 'XMLN',
+      'ZEC': 'XZEC'
+    };
+    return reverseConversions[asset] || asset;
+  }
+
+  // Get Kraken pair name for an asset (different from asset name)
+  getPairName(asset) {
+    const pairConversions = {
+      'DOGE': 'XDG',  // DOGE uses XDG in pair names, not XXDG
+      'BTC': 'XBT',   // BTC uses XBT in pair names, not XXBT
+      'ETH': 'ETH',   // ETH uses ETH in pair names
+      'USD': 'USD',   // USD uses USD in pair names, not ZUSD
+      'USDT': 'USDT',
+      'USDC': 'USDC',
+      'EUR': 'EUR',   // EUR uses EUR in pair names, not ZEUR
+      'GBP': 'GBP',   // GBP uses GBP in pair names, not ZGBP
+      'CAD': 'CAD',   // CAD uses CAD in pair names, not ZCAD
+      'AUD': 'AUD',   // AUD uses AUD in pair names, not ZAUD
+      'JPY': 'JPY',   // JPY uses JPY in pair names, not ZJPY
+      'CHF': 'CHF',
+      'XRP': 'XRP',   // XRP uses XRP in pair names, not XXRP
+      'XLM': 'XLM',   // XLM uses XLM in pair names, not XXLM
+      'XMR': 'XMR',   // XMR uses XMR in pair names, not XXMR
+      'LTC': 'LTC',   // LTC uses LTC in pair names, not XLTC
+      'ETC': 'ETC',   // ETC uses ETC in pair names, not XETC
+      'REP': 'REP',   // REP uses REP in pair names, not XREP
+      'MLN': 'MLN',   // MLN uses MLN in pair names, not XMLN
+      'ZEC': 'ZEC'    // ZEC uses ZEC in pair names, not XZEC
+    };
+    return pairConversions[asset] || asset;
+  }
+
+  // Get standard asset name from Kraken asset name
+  getStandardAssetName(krakenAsset) {
+    const standardConversions = {
+      'XXDG': 'DOGE',
+      'XXBT': 'BTC',
+      'XETH': 'ETH',
+      'ZUSD': 'USD',
+      'ZEUR': 'EUR',
+      'ZGBP': 'GBP',
+      'ZCAD': 'CAD',
+      'ZAUD': 'AUD',
+      'ZJPY': 'JPY',
+      'XXRP': 'XRP',
+      'XXLM': 'XLM',
+      'XXMR': 'XMR',
+      'XLTC': 'LTC',
+      'XETC': 'ETC',
+      'XREP': 'REP',
+      'XMLN': 'MLN',
+      'XZEC': 'ZEC'
+    };
+    return standardConversions[krakenAsset] || krakenAsset;
   }
 
   // Return all tradable pair names as an array

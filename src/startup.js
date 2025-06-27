@@ -17,10 +17,11 @@ async function startServices() {
     logger.info(`   WebSocket Endpoint: ${config.kraken.endpoints.websocket}`);
     logger.info(`   REST API Endpoint: ${config.kraken.endpoints.rest}`);
     
-    // Validate API credentials
+    // Validate API credentials and get account balance
     logger.info('🔑 Validating API credentials...');
+    let balance;
     try {
-      const balance = await krakenService.getAccountBalance();
+      balance = await krakenService.getAccountBalance();
       logger.info('✅ API credentials validated successfully');
       logger.info(`   Account has ${Object.keys(balance).length} different assets`);
       
@@ -48,14 +49,15 @@ async function startServices() {
       throw err;
     }
     
-    // Fetch tradable pairs
-    logger.info('📊 Fetching tradable pairs...');
+    // Fetch minimum order sizes only for assets we have
+    logger.info('📊 Fetching minimum order sizes for account assets...');
     try {
-      await krakenService.fetchTradablePairs();
-      const pairs = krakenService.getTradablePairs();
-      logger.info(`✅ Loaded ${pairs.length} tradable pairs`);
+      // Get list of assets we have (including zero balances for future deposits)
+      const accountAssets = Object.keys(balance);
+      await krakenService.fetchMinimumOrderSizesForAssets(accountAssets);
+      logger.info(`✅ Loaded minimum order sizes for ${accountAssets.length} assets`);
     } catch (err) {
-      logger.error('❌ Failed to fetch tradable pairs', {
+      logger.error('❌ Failed to fetch minimum order sizes', {
         error: err.message,
         stack: err.stack
       });

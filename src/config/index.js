@@ -12,7 +12,7 @@ const config = {
     apiKey: process.env.KRAKEN_API_KEY,
     apiSecret: process.env.KRAKEN_API_SECRET,
     sandbox: process.env.KRAKEN_SANDBOX === 'true',
-    targetFiat: process.env.TARGET_FIAT || 'ZUSD',
+    targetFiat: process.env.TARGET_FIAT || 'USD',
     timeout: 10000,
     retryAttempts: 3,
     retryDelay: 1000,

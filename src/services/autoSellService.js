@@ -27,18 +27,8 @@ class AutoSellService {
         },
         timestamp: new Date().toISOString()
       });
-      // Send a snapshot log to the API endpoint (do not crash on error)
-      if (config.logging.api.enabled) {
-        try {
-          await sendLogToApi({
-            eventType: 'snapshot',
-            timestamp: new Date().toISOString(),
-            balances
-          });
-        } catch (err) {
-          logger.error('Failed to send snapshot log to API', { error: err.message });
-        }
-      }
+      // Note: Initial snapshot is not sent to API as it doesn't match the expected event format
+      // Only individual deposit and sale events are logged
     } catch (err) {
       logger.error('Error processing initial balances', {
         error: err.message,
@@ -101,9 +91,8 @@ class AutoSellService {
     }
 
     // Send log to API if enabled - only for snapshots, not for individual updates
-    if (config.logging.api.enabled && isSnapshot) {
-      await sendLogToApi(logData);
-    }
+    // Note: Snapshots are not sent to API as they don't match the expected event format
+    // Only individual deposit and sale events are logged
   }
 
   // Process individual balance changes

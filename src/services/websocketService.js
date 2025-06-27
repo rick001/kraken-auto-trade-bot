@@ -20,9 +20,6 @@ class WebSocketService {
     try {
       logger.info('🌐 Initializing WebSocket connection...');
       
-      await krakenService.fetchTradablePairs();
-      logger.info('📊 Tradable pairs loaded for WebSocket');
-      
       const token = await krakenService.getWebSocketToken();
       if (!token) {
         throw new Error('No WebSocket token obtained');
