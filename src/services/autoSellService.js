@@ -106,8 +106,9 @@ class AutoSellService {
       oldAmount,
       newAmount,
       isSnapshot,
+      updateType: updateInfo?.type,
       shouldProcess: newAmount > 0 && !isSnapshot,
-      willProcess: newAmount > 0 && !isSnapshot && newAmount > oldAmount
+      willProcess: newAmount > 0 && !isSnapshot && newAmount > oldAmount && updateInfo?.type !== 'trade'
     });
 
     // For snapshots, process all non-zero balances
@@ -117,8 +118,8 @@ class AutoSellService {
       return;
     }
 
-    // For updates, only process if it's a new deposit (amount increased)
-    if (!isSnapshot && newAmount > oldAmount && newAmount > 0) {
+    // For updates, only process if it's a new deposit (amount increased) AND not a trade result
+    if (!isSnapshot && newAmount > oldAmount && newAmount > 0 && updateInfo?.type !== 'trade') {
       logger.info(`Processing new deposit: ${asset} ${depositAmount}`);
       // Log the deposit event (do not crash on error)
       if (config.logging.api.enabled) {
@@ -140,6 +141,18 @@ class AutoSellService {
       saleTriggered = await this.processBalance(convertedAsset, depositAmount);
       // If a sale was triggered, log the sale event (handled in processBalance)
       return;
+    }
+
+    // Log ignored trade results for debugging
+    if (!isSnapshot && updateInfo?.type === 'trade') {
+      logger.debug(`Ignoring trade result for ${asset}: ${depositAmount > 0 ? '+' : ''}${depositAmount}`, {
+        asset,
+        oldAmount,
+        newAmount,
+        depositAmount,
+        updateType: updateInfo.type,
+        reason: 'trade_result'
+      });
     }
   }
 
