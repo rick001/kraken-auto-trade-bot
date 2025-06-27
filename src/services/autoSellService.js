@@ -98,7 +98,9 @@ class AutoSellService {
   // Process individual balance changes
   async processBalanceChange(asset, oldAmount, newAmount, isSnapshot, logData) {
     const convertedAsset = convertAssetName(asset);
-    
+    const depositAmount = newAmount - oldAmount;
+    let saleTriggered = false;
+
     logger.debug(`Processing balance change for ${asset}`, {
       asset,
       oldAmount,
@@ -117,9 +119,22 @@ class AutoSellService {
 
     // For updates, only process if it's a new deposit (amount increased)
     if (!isSnapshot && newAmount > oldAmount && newAmount > 0) {
-      const depositAmount = newAmount - oldAmount;
       logger.info(`Processing new deposit: ${asset} ${depositAmount}`);
-      await this.processBalance(convertedAsset, depositAmount);
+      // Log the deposit event
+      if (config.logging.api.enabled) {
+        await sendLogToApi({
+          event: 'deposit',
+          asset: convertedAsset,
+          depositAmount,
+          newBalance: newAmount,
+          timestamp: new Date().toISOString(),
+          saleTriggered: false
+        });
+      }
+      // Try to process a sale (may or may not trigger)
+      saleTriggered = await this.processBalance(convertedAsset, depositAmount);
+      // If a sale was triggered, log the sale event (handled in processBalance)
+      return;
     }
   }
 
@@ -137,7 +152,7 @@ class AutoSellService {
         fiat,
         fiatConverted
       });
-      return;
+      return false;
     }
 
     // Check minimum amount
@@ -148,7 +163,7 @@ class AutoSellService {
         amount: totalAmount, 
         reason: 'below_minimum' 
       });
-      return;
+      return false;
     }
 
     // Check if there's a market pair
@@ -158,7 +173,7 @@ class AutoSellService {
         targetFiat: config.kraken.targetFiat, 
         reason: 'no_market' 
       });
-      return;
+      return false;
     }
 
     // Check minimum order size
@@ -170,21 +185,30 @@ class AutoSellService {
         minimum: minimumOrderSize,
         reason: 'below_minimum_order'
       });
-      return;
+      return false;
     }
 
     // Place sell order
     try {
       const pair = krakenService.getMarketPair(asset);
       const order = await krakenService.placeMarketSellOrder(pair, totalAmount);
-      
       logger.info(`Market sell order placed for ${asset}`, {
         asset,
         amount: totalAmount,
         pair,
         txid: order.txid
       });
-
+      // Log the sale event
+      if (config.logging.api.enabled) {
+        await sendLogToApi({
+          event: 'sale',
+          asset,
+          amount: totalAmount,
+          pair,
+          txid: order.txid,
+          timestamp: new Date().toISOString()
+        });
+      }
       // Monitor order status
       setTimeout(async () => {
         const orderStatus = await krakenService.getOrderStatus(order.txid);
@@ -197,7 +221,7 @@ class AutoSellService {
           });
         }
       }, 5000);
-
+      return true;
     } catch (err) {
       logger.error(`Failed to place sell order for ${asset}`, {
         asset,
@@ -205,6 +229,7 @@ class AutoSellService {
         error: err.message,
         stack: err.stack
       });
+      return false;
     }
   }
 
