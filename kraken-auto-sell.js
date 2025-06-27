@@ -22,7 +22,7 @@ const CONFIG = {
         : 'https://api.kraken.com/0',
       WS: process.env.KRAKEN_SANDBOX === 'true'
         ? 'wss://demo-futures.kraken.com/ws/v1'
-        : 'wss://ws-auth.kraken.com'
+        : 'wss://ws-auth.kraken.com/v2'
     }
   },
   WEBSOCKET: {
@@ -57,9 +57,18 @@ let pairs = {};
 let minimumOrderSizes = {};
 let initialProcessingComplete = false;
 let isProcessingSnapshot = false;
-let requestCount = 0;
 let lastRequestTime = Date.now();
 let wsInstance = null;
+let lastNonce = Date.now() * 1000; // Add nonce tracking
+let isReconnecting = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const BASE_RECONNECT_DELAY = 5000;
+
+// Add connection health tracking
+let lastHeartbeatTime = Date.now();
+let heartbeatCheckInterval = null;
+const HEARTBEAT_TIMEOUT = 30000; // 30 seconds without heartbeat
 
 // Rate limiting
 const rateLimiter = {
@@ -75,6 +84,13 @@ const rateLimiter = {
       }
     }
     this.requests.push(now);
+    
+    // Add minimum delay between requests to prevent nonce issues
+    const timeSinceLastRequest = now - lastRequestTime;
+    if (timeSinceLastRequest < 100) { // Minimum 100ms between requests
+      await new Promise(resolve => setTimeout(resolve, 100 - timeSinceLastRequest));
+    }
+    lastRequestTime = Date.now();
   }
 };
 
@@ -140,7 +156,9 @@ function isRetryableError(error) {
     error.code === 'ECONNRESET' ||
     error.code === 'ETIMEDOUT' ||
     error.code === 'ECONNREFUSED' ||
-    (error.response && error.response.status >= 500)
+    (error.response && error.response.status >= 500) ||
+    error.message.includes('Invalid nonce') ||
+    error.message.includes('API:Invalid nonce')
   );
 }
 
@@ -161,7 +179,7 @@ async function sendLogToApi(logData) {
       'Content-Type': 'application/json'
     };
     if (LOG_API_CONFIG.apiKey) {
-      headers['Authorization'] = `Bearer ${LOG_API_CONFIG.apiKey}`;
+      headers['x-secret-key'] = LOG_API_CONFIG.apiKey;
     }
     await axios.post(LOG_API_CONFIG.endpoint, logData, {
       headers,
@@ -237,54 +255,71 @@ async function getTradeDetails(tradeIds) {
   if (!Array.isArray(tradeIds)) {
     tradeIds = [tradeIds];
   }
-  try {
-    const tradesResp = await kraken.api('QueryTrades', {
-      txid: tradeIds.join(',')
-    });
-    const trades = tradesResp.result;
-    let totalUsd = 0;
-    let totalFee = 0;
-    for (const [txid, trade] of Object.entries(trades)) {
-      const usdValue = parseFloat(trade.cost) || 0;
-      const fee = parseFloat(trade.fee) || 0;
-      totalUsd += usdValue;
-      totalFee += fee;
-      logger.info(`Trade ${txid} details:`, {
-        pair: trade.pair,
-        type: trade.type,
-        ordertype: trade.ordertype,
-        price: trade.price,
-        cost: usdValue,
-        fee: fee,
-        vol: trade.vol,
-        margin: trade.margin,
-        misc: trade.misc
+  
+  return withRetry(
+    async () => {
+      const tradesResp = await kraken.api('QueryTrades', {
+        txid: tradeIds.join(',')
       });
-    }
-    logger.info('Trade summary:', {
-      totalTrades: Object.keys(trades).length,
-      totalUsdValue: totalUsd,
-      totalFees: totalFee,
-      netUsdValue: totalUsd - totalFee
-    });
-    return {
-      trades,
-      totalUsd,
-      totalFee,
-      netUsd: totalUsd - totalFee
-    };
-  } catch (err) {
+      const trades = tradesResp.result;
+      let totalUsd = 0;
+      let totalFee = 0;
+      for (const [txid, trade] of Object.entries(trades)) {
+        const usdValue = parseFloat(trade.cost) || 0;
+        const fee = parseFloat(trade.fee) || 0;
+        totalUsd += usdValue;
+        totalFee += fee;
+        logger.info(`Trade ${txid} details:`, {
+          pair: trade.pair,
+          type: trade.type,
+          ordertype: trade.ordertype,
+          price: trade.price,
+          cost: usdValue,
+          fee: fee,
+          vol: trade.vol,
+          margin: trade.margin,
+          misc: trade.misc
+        });
+      }
+      logger.info('Trade summary:', {
+        totalTrades: Object.keys(trades).length,
+        totalUsdValue: totalUsd,
+        totalFees: totalFee,
+        netUsdValue: totalUsd - totalFee
+      });
+      return {
+        trades,
+        totalUsd,
+        totalFee,
+        netUsd: totalUsd - totalFee
+      };
+    },
+    'GetTradeDetails'
+  ).catch(err => {
     logger.error('Error getting trade details:', err.message);
     return null;
-  }
+  });
 }
 
 function convertAssetName(asset) {
-  if (asset === 'USD') return 'ZUSD';
-  if (asset === 'DOGE') return 'XXDG';
-  if (asset === 'ETH') return 'XETH';
-  if (asset === 'BTC' || asset === 'XBT') return 'XXBT';
-  return asset;
+  // Handle common asset name variations
+  const conversions = {
+    'USD': 'ZUSD',
+    'DOGE': 'XXDG',
+    'ETH': 'XETH',
+    'BTC': 'XXBT',
+    'XBT': 'XXBT',
+    'SOL': 'SOL', // Keep as is
+    'TRUMP': 'TRUMP', // Keep as is
+    'USDC': 'USDC', // Keep as is
+    'USDT': 'USDT', // Keep as is
+    'XETH': 'XETH', // Already correct
+    'XXBT': 'XXBT', // Already correct
+    'XXDG': 'XXDG', // Already correct
+    'ZUSD': 'ZUSD'  // Already correct
+  };
+  
+  return conversions[asset] || asset;
 }
 
 function processV2Balances(balances) {
@@ -299,17 +334,32 @@ function processV2Balances(balances) {
 }
 
 async function processBalanceChange(asset, oldAmount, newAmount, isSnapshot, logData) {
-  const shouldProcess = !isSnapshot || oldAmount > 0;
+  // Process any balance > 0, whether from snapshot or update
+  const shouldProcess = newAmount > 0;
+  
+  logger.debug(`Processing balance change for ${asset}`, {
+    asset,
+    oldAmount,
+    newAmount,
+    isSnapshot,
+    shouldProcess,
+    willProcess: newAmount > 0 && shouldProcess
+  });
+  
   if (newAmount > 0 && shouldProcess) {
     logger.info(`Processing ${isSnapshot ? 'snapshot' : 'update'} balance for ${asset}: ${newAmount}`);
     await processBalance(asset, newAmount);
   } else if (newAmount > 0) {
     logger.info(`Skipping ${isSnapshot ? 'snapshot' : 'update'} balance for ${asset}: ${newAmount} (already processed)`);
+  } else if (newAmount === 0 && oldAmount > 0) {
+    logger.info(`Balance for ${asset} reduced to zero: ${oldAmount} -> ${newAmount}`);
   }
+  
   logData.balances[asset] = {
     amount: newAmount,
     changed: newAmount !== oldAmount
   };
+  
   if (newAmount !== oldAmount) {
     logData.changes.push({
       asset,
@@ -317,6 +367,7 @@ async function processBalanceChange(asset, oldAmount, newAmount, isSnapshot, log
       newAmount
     });
   }
+  
   return newAmount !== oldAmount;
 }
 
@@ -328,12 +379,21 @@ async function handleBalanceUpdate(balances, isSnapshot = false) {
     changes: [],
     isSnapshot
   };
+  
+  logger.info(`Processing balance ${isSnapshot ? 'snapshot' : 'update'}`, {
+    isSnapshot,
+    balanceCount: Object.keys(balances).length,
+    assets: Object.keys(balances)
+  });
+  
   if (isSnapshot) {
     logger.info('Processing initial WebSocket snapshot...');
   }
+  
   if (Array.isArray(balances)) {
     balances = processV2Balances(balances);
   }
+  
   let hasChanges = false;
   for (const [asset, amount] of Object.entries(balances)) {
     const newTotalAmount = parseFloat(amount);
@@ -341,20 +401,41 @@ async function handleBalanceUpdate(balances, isSnapshot = false) {
       logger.warn(`Skipping invalid balance for ${asset}: ${amount}`);
       continue;
     }
+    
     const oldAmount = parseFloat(currentBalances[asset] || 0);
+    const convertedAsset = convertAssetName(asset);
+    
+    logger.debug(`Processing balance for ${asset} (converted: ${convertedAsset})`, {
+      asset,
+      convertedAsset,
+      oldAmount,
+      newAmount: newTotalAmount,
+      changed: newTotalAmount !== oldAmount
+    });
+    
     currentBalances[asset] = amount;
     const changed = await processBalanceChange(asset, oldAmount, newTotalAmount, isSnapshot, logData);
     hasChanges = hasChanges || changed;
   }
+  
   if (hasChanges) {
-    logger.info(`Balance ${isSnapshot ? 'snapshot' : 'updates'}:`);
+    logger.info(`Balance ${isSnapshot ? 'snapshot' : 'updates'} processed:`, {
+      changeCount: logData.changes.length,
+      changes: logData.changes
+    });
     logData.changes.forEach(change => {
       logger.info(`  ${change.asset}: ${change.oldAmount} -> ${change.newAmount}`);
     });
     if (LOG_API_CONFIG.enabled) {
       await sendLogToApi(logData);
     }
+  } else {
+    logger.debug('No balance changes detected', {
+      isSnapshot,
+      balanceCount: Object.keys(balances).length
+    });
   }
+  
   if (isSnapshot) {
     logger.info('Initial WebSocket snapshot processing complete');
     initialProcessingComplete = true;
@@ -475,14 +556,36 @@ async function processBalance(asset, totalAmount) {
           logger.info(`Waiting for order ${txids[0]} to complete...`);
           await new Promise(resolve => setTimeout(resolve, 2000));
           const orderStatus = await getOrderStatus(txids[0]);
-          await orderStatus?.trades && getTradeDetails(orderStatus.trades);
+          
+          // Log the actual order status instead of assuming 'open'
+          const actualStatus = orderStatus?.status || 'unknown';
+          logger.info(`Order placed for ${asset}`, {
+            asset,
+            orderId: txids[0],
+            pair: pairKey,
+            status: actualStatus
+          });
+          
+          // Only try to get trade details if order is closed and has trades
+          if (orderStatus?.status === 'closed' && orderStatus?.trades) {
+            try {
+              await getTradeDetails(orderStatus.trades);
+            } catch (tradeError) {
+              logger.warn(`Failed to get trade details for ${asset}`, {
+                asset,
+                orderId: txids[0],
+                error: tradeError.message
+              });
+            }
+          }
+        } else {
+          logger.info(`Order placed for ${asset}`, {
+            asset,
+            orderId: 'unknown',
+            pair: pairKey,
+            status: 'pending'
+          });
         }
-        console.log(`[${new Date().toISOString()}] INFO: Order placed for ${asset}`, {
-          asset,
-          orderId: txids[0],
-          pair: pairKey,
-          status: orderResult.status || 'open'
-        });
         if (LOG_API_CONFIG.enabled) {
           await sendLogToApi(logData);
         }
@@ -557,22 +660,29 @@ async function startPrivateWebSocket(token) {
   const connectionStartTime = Date.now();
   privateWs.on('open', () => {
     logger.info('WebSocket connected', {
-      endpoint: CONFIG.API.ENDPOINTS.WS,
-      tokenPreview: token.slice(0, 12) + '...'
+      endpoint: CONFIG.API.ENDPOINTS.WS + '/v2',
+      tokenPreview: token.substring(0, 12) + '...'
     });
-    const subscribeBalance = {
+    
+    // Start heartbeat monitoring
+    startHeartbeatMonitoring();
+    
+    // Subscribe to balances
+    const subscribeMessage = {
       method: 'subscribe',
       params: {
         channel: 'balances',
-        token: token,
-        snapshot: true
+        token: token
       }
     };
-    logger.debug('Subscribing to balances', {
-      method: subscribeBalance.method,
-      channel: subscribeBalance.params.channel
+    
+    logger.debug('Subscribing to balances channel', {
+      method: subscribeMessage.method,
+      channel: subscribeMessage.params.channel
     });
-    privateWs.send(JSON.stringify(subscribeBalance));
+    
+    privateWs.send(JSON.stringify(subscribeMessage));
+    
     pingInterval = setInterval(() => {
       if (privateWs.readyState === WebSocket.OPEN) {
         privateWs.ping();
@@ -581,14 +691,46 @@ async function startPrivateWebSocket(token) {
   });
   // Handler functions for message types
   async function handleBalancesMessage(message) {
-    if (message.data) {
-      if (!hasReceivedSnapshot && message.result?.snapshot === true) {
-        logger.info('Received initial WebSocket snapshot');
-        hasReceivedSnapshot = true;
-        await handleBalanceUpdate(message.data, true);
-      } else if (hasReceivedSnapshot) {
-        logger.debug('Received balance update');
-        await handleBalanceUpdate(message.data, false);
+    logger.debug('Received WebSocket balance message', {
+      channel: message.channel,
+      type: message.type,
+      hasData: !!message.data,
+      dataLength: message.data?.length || 0
+    });
+    
+    if (message.data && Array.isArray(message.data)) {
+      if (message.type === 'snapshot') {
+        logger.info('Received initial WebSocket balance snapshot');
+        // Convert v2 format to our expected format
+        const balances = {};
+        for (const balance of message.data) {
+          balances[balance.asset] = balance.balance.toString();
+        }
+        await handleBalanceUpdate(balances, true);
+      } else if (message.type === 'update') {
+        // Add prominent debug logging for real-time balance updates
+        console.log('🔔 REAL-TIME BALANCE UPDATE:', JSON.stringify(message.data, null, 2));
+        logger.info('Received balance update via WebSocket');
+        
+        // Process individual balance updates
+        for (const update of message.data) {
+          logger.info(`Balance update: ${update.asset} ${update.type} ${update.amount}`, {
+            asset: update.asset,
+            type: update.type,
+            amount: update.amount,
+            balance: update.balance,
+            ledgerId: update.ledger_id
+          });
+          
+          // Update current balances
+          currentBalances[update.asset] = update.balance.toString();
+          
+          // If it's a deposit, process it for selling
+          if (update.type === 'deposit' && update.amount > 0) {
+            logger.info(`Processing new deposit: ${update.asset} ${update.amount}`);
+            await processBalance(update.asset, update.amount);
+          }
+        }
       }
     } else {
       logger.warn('Received balance message without data', { message });
@@ -597,12 +739,39 @@ async function startPrivateWebSocket(token) {
 
   function handleHeartbeatMessage() {
     const now = Date.now();
-    if (now - lastHeartbeatLog > 30000) {
+    lastHeartbeatTime = now;
+    
+    if (now - lastHeartbeatLog > 300000) { // 5 minutes instead of 30 seconds
       logger.debug('WebSocket heartbeat received', {
         connectionTime: Math.floor((now - lastHeartbeatLog) / 1000) + 's'
       });
       lastHeartbeatLog = now;
     }
+  }
+
+  // Add connection health monitoring
+  function startHeartbeatMonitoring() {
+    if (heartbeatCheckInterval) {
+      clearInterval(heartbeatCheckInterval);
+    }
+    
+    heartbeatCheckInterval = setInterval(() => {
+      const now = Date.now();
+      const timeSinceLastHeartbeat = now - lastHeartbeatTime;
+      
+      if (timeSinceLastHeartbeat > HEARTBEAT_TIMEOUT) {
+        logger.warn('No heartbeat received, connection may be stale', {
+          timeSinceLastHeartbeat: `${Math.floor(timeSinceLastHeartbeat / 1000)}s`,
+          timeout: `${HEARTBEAT_TIMEOUT / 1000}s`
+        });
+        
+        // Force reconnection if no heartbeat for too long
+        if (privateWs.readyState === WebSocket.OPEN) {
+          logger.info('Forcing WebSocket reconnection due to missed heartbeats');
+          privateWs.close(1000, 'Missed heartbeats');
+        }
+      }
+    }, 10000); // Check every 10 seconds
   }
 
   function handleStatusMessage(message) {
@@ -613,8 +782,55 @@ async function startPrivateWebSocket(token) {
 
   function handleErrorMessage(message) {
     logger.error('WebSocket error received', {
-      error: message.error
+      error: message.error,
+      event: message.event,
+      status: message.status,
+      errorMessage: message.errorMessage
     });
+    
+    // Handle subscription errors
+    if (message.event === 'subscriptionStatus' && message.status === 'error') {
+      logger.error('WebSocket subscription failed', {
+        errorMessage: message.errorMessage,
+        event: message.event,
+        willRetry: true
+      });
+      
+      // Only retry subscription errors if it's not a permanent error
+      const permanentErrors = ['Event(s) not found', 'Invalid channel', 'Invalid token'];
+      const isPermanentError = permanentErrors.some(err => 
+        message.errorMessage && message.errorMessage.includes(err)
+      );
+      
+      if (!isPermanentError) {
+        // Try to resubscribe after a delay
+        setTimeout(async () => {
+          try {
+            logger.info('Attempting to resubscribe to balances...');
+            const newToken = await getWebSocketToken();
+            if (newToken && privateWs.readyState === WebSocket.OPEN) {
+              const resubscribeMessage = {
+                method: 'subscribe',
+                params: {
+                  channel: 'balances',
+                  token: newToken
+                }
+              };
+              privateWs.send(JSON.stringify(resubscribeMessage));
+              logger.info('Resubscription message sent');
+            } else {
+              logger.warn('Cannot resubscribe - connection not ready or no token');
+            }
+          } catch (err) {
+            logger.error('Failed to resubscribe', { error: err.message });
+          }
+        }, 5000);
+      } else {
+        logger.error('Permanent subscription error, will not retry', {
+          errorMessage: message.errorMessage
+        });
+      }
+    }
   }
 
   function handleSubscribeMessage(message) {
@@ -627,18 +843,44 @@ async function startPrivateWebSocket(token) {
   privateWs.on('message', async (data) => {
     try {
       const message = JSON.parse(data);
+      
+      // Add prominent logging for real-time balance updates
+      if (message.channel === 'balances' && message.type === 'update') {
+        console.log('🔔 REAL-TIME BALANCE UPDATE:', JSON.stringify(message.data, null, 2));
+      }
+      
+      // Log all messages for debugging (except heartbeats to reduce log noise)
+      if (message.channel !== 'heartbeat') {
+        logger.debug('Received WebSocket message', { 
+          event: message.event,
+          channel: message.channel,
+          type: message.type,
+          status: message.status,
+          hasData: !!message.data,
+          hasResult: !!message.result
+        });
+      }
+      
       if (message.channel === 'balances') {
         await handleBalancesMessage(message);
       } else if (message.channel === 'heartbeat') {
         handleHeartbeatMessage();
       } else if (message.channel === 'status') {
         handleStatusMessage(message);
-      } else if (message.error) {
+      } else if (message.event === 'subscriptionStatus') {
+        if (message.status === 'error') {
+          handleErrorMessage(message);
+        } else if (message.status === 'subscribed') {
+          handleSubscribeMessage(message);
+        }
+      } else if (message.error || message.errorMessage) {
         handleErrorMessage(message);
       } else if (message.method === 'subscribe' && message.result) {
         handleSubscribeMessage(message);
+      } else if (message.event === 'systemStatus') {
+        logger.info('System status received', { status: message.status });
       } else if (message.channel !== 'heartbeat') {
-        logger.debug('Received WebSocket message', { message });
+        logger.debug('Unhandled WebSocket message', { message });
       }
     } catch (err) {
       logger.error('Error processing WebSocket message', {
@@ -660,25 +902,71 @@ async function startPrivateWebSocket(token) {
       code,
       reason: reason.toString(),
       duration: `${connectionDuration}s`,
-      willReconnect: true
+      willReconnect: true,
+      reconnectAttempts
     });
+    
     if (pingInterval) {
       clearInterval(pingInterval);
     }
+    
+    if (heartbeatCheckInterval) {
+      clearInterval(heartbeatCheckInterval);
+    }
+    
+    // Prevent multiple simultaneous reconnection attempts
+    if (isReconnecting) {
+      logger.warn('Reconnection already in progress, skipping');
+      return;
+    }
+    
+    isReconnecting = true;
+    
+    // Calculate exponential backoff delay
+    const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts), 60000); // Max 60 seconds
+    
     setTimeout(async () => {
       try {
-        logger.info('Attempting WebSocket reconnection');
+        logger.info('Attempting WebSocket reconnection', {
+          attempt: reconnectAttempts + 1,
+          maxAttempts: MAX_RECONNECT_ATTEMPTS,
+          delay
+        });
+        
         const newToken = await getWebSocketToken();
-        startPrivateWebSocket(newToken);
+        if (newToken) {
+          await startPrivateWebSocket(newToken);
+          reconnectAttempts = 0; // Reset on successful connection
+          logger.info('WebSocket reconnection successful');
+        } else {
+          throw new Error('Failed to obtain new WebSocket token');
+        }
       } catch (err) {
+        reconnectAttempts++;
         logger.error('Reconnection failed', {
           error: err.message,
-          stack: err.stack,
-          retryIn: `${CONFIG.WEBSOCKET.RECONNECT_DELAY}ms`
+          attempt: reconnectAttempts,
+          maxAttempts: MAX_RECONNECT_ATTEMPTS,
+          retryIn: delay
         });
-        setTimeout(() => startPrivateWebSocket(token), CONFIG.WEBSOCKET.RECONNECT_DELAY);
+        
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+          // Schedule next reconnection attempt
+          setTimeout(() => {
+            isReconnecting = false;
+            startPrivateWebSocket(token);
+          }, delay);
+        } else {
+          logger.error('Max reconnection attempts reached, giving up', {
+            totalAttempts: reconnectAttempts
+          });
+          isReconnecting = false;
+          // Could implement additional fallback here (e.g., REST API polling)
+        }
+      } finally {
+        isReconnecting = false;
       }
-    }, CONFIG.WEBSOCKET.RECONNECT_DELAY);
+    }, delay);
   });
   privateWs.on('pong', () => {
     logger.debug('WebSocket pong received');

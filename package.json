@@ -1,12 +1,10 @@
 {
   "name": "kraken-auto",
   "version": "1.0.0",
-  "description": "Unified Kraken auto-sell and trade API service. Provides real-time auto-sell of balances to USD and exposes trade/order details and system health via a REST API with Swagger documentation.",
+  "description": "Kraken auto-sell bot with real-time balance monitoring and unified API service. Automatically sells new deposits to USD and provides trade/order details via REST API.",
   "main": "kraken-service.js",
   "scripts": {
-    "start": "node kraken-service.js",
-    "balances": "node kraken-balances.js",
-    "trade-api": "node kraken-trade-api.js"
+    "start": "node kraken-service.js"
   },
   "dependencies": {
     "axios": "^1.9.0",

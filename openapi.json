@@ -1,0 +1,93 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Kraken Auto-Trade Bot API",
+    "version": "1.0.0",
+    "description": "API for Kraken auto-trade bot."
+  },
+  "servers": [
+    { "url": "http://localhost:3007/api" }
+  ],
+  "paths": {
+    "/trade/{txid}": {
+      "get": {
+        "summary": "Get trade details by transaction ID",
+        "parameters": [
+          {
+            "name": "txid",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Transaction ID of the trade."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Trade details (placeholder)",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "404": { "description": "Trade not found" }
+        }
+      }
+    },
+    "/trades/batch": {
+      "post": {
+        "summary": "Get details for multiple trades (placeholder)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "txids": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Array of transaction IDs."
+                  }
+                },
+                "required": ["txids"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Batch trade details (placeholder)",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/auto-sell/status": {
+      "get": {
+        "summary": "Get status of the auto-sell service",
+        "responses": {
+          "200": {
+            "description": "Status information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "timestamp": { "type": "string", "format": "date-time" },
+                    "initialProcessingComplete": { "type": "boolean" },
+                    "currentBalances": { "type": "object", "additionalProperties": { "type": "string" } },
+                    "websocket": {
+                      "type": "object",
+                      "properties": {
+                        "connected": { "type": "boolean" },
+                        "lastUpdate": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+} 
