@@ -31,9 +31,9 @@ class AutoSellService {
       if (config.logging.api.enabled) {
         try {
           await sendLogToApi({
-            event: 'snapshot',
-            balances,
-            timestamp: new Date().toISOString()
+            eventType: 'snapshot',
+            timestamp: new Date().toISOString(),
+            balances
           });
         } catch (err) {
           logger.error('Failed to send snapshot log to API', { error: err.message });
@@ -59,7 +59,7 @@ class AutoSellService {
     const changes = [];
     const logData = {
       timestamp: new Date().toISOString(),
-      type: isSnapshot ? 'snapshot' : 'update',
+      eventType: isSnapshot ? 'snapshot' : 'update',
       balances: balances,
       changes: []
     };
@@ -135,12 +135,13 @@ class AutoSellService {
       if (config.logging.api.enabled) {
         try {
           await sendLogToApi({
-            event: 'deposit',
-            asset: convertedAsset,
-            depositAmount,
-            newBalance: newAmount,
+            eventType: 'deposit',
             timestamp: new Date().toISOString(),
-            saleTriggered: false
+            asset: convertedAsset,
+            amount: depositAmount,
+            balance: newAmount,
+            ledgerId: logData?.ledgerId || null,
+            refId: logData?.refId || null
           });
         } catch (err) {
           logger.error('Failed to send deposit log to API', { error: err.message });
@@ -217,12 +218,12 @@ class AutoSellService {
       if (config.logging.api.enabled) {
         try {
           await sendLogToApi({
-            event: 'sale',
+            eventType: 'sale',
+            timestamp: new Date().toISOString(),
             asset,
             amount: totalAmount,
             pair,
-            txid: order.txid,
-            timestamp: new Date().toISOString()
+            txid: order.txid
           });
         } catch (err) {
           logger.error('Failed to send sale log to API', { error: err.message });
