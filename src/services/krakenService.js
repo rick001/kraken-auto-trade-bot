@@ -37,7 +37,8 @@ class KrakenService {
         
         logger.info('Tradable pairs and minimum order sizes loaded', {
           pairCount: Object.keys(this.pairs).length,
-          minimumOrderSizesCount: Object.keys(this.minimumOrderSizes).length
+          minimumOrderSizesCount: Object.keys(this.minimumOrderSizes).length,
+          minimumOrderSizes: this.minimumOrderSizes
         });
       },
       'FetchTradablePairs'
@@ -163,7 +164,7 @@ class KrakenService {
 
   // Get minimum order size for an asset
   getMinimumOrderSize(asset) {
-    return this.minimumOrderSizes[asset] || config.autoSell.defaultMinimum;
+    return this.minimumOrderSizes[asset] || 0.001; // Reasonable default if not found
   }
 
   // Check if asset has a market pair

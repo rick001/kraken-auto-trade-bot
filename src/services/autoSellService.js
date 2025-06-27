@@ -171,17 +171,6 @@ class AutoSellService {
       return false;
     }
 
-    // Check minimum amount
-    const minimumAmount = config.autoSell.minimumAmounts[asset] || config.autoSell.defaultMinimum;
-    if (totalAmount < minimumAmount) {
-      logger.info(`Skipping ${asset} - amount too small`, { 
-        asset, 
-        amount: totalAmount, 
-        reason: 'below_minimum' 
-      });
-      return false;
-    }
-
     // Check if there's a market pair
     if (!krakenService.hasMarketPair(asset)) {
       logger.warn(`No market for ${asset}`, { 
@@ -192,14 +181,14 @@ class AutoSellService {
       return false;
     }
 
-    // Check minimum order size
+    // Check minimum order size (Kraken's real minimum)
     const minimumOrderSize = krakenService.getMinimumOrderSize(asset);
     if (totalAmount < minimumOrderSize) {
-      logger.info(`Waiting for more ${asset}`, {
-        asset,
-        current: totalAmount,
+      logger.info(`Skipping ${asset} - amount too small`, { 
+        asset, 
+        amount: totalAmount, 
         minimum: minimumOrderSize,
-        reason: 'below_minimum_order'
+        reason: 'below_minimum_order' 
       });
       return false;
     }

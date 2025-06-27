@@ -57,17 +57,8 @@ const config = {
 
   // Auto-sell configuration
   autoSell: {
-    minimumAmounts: {
-      SOL: 0.1,
-      ETH: 0.001,
-      BTC: 0.0001,
-      USDC: 1,
-      USDT: 1,
-      XRP: 1,
-      DOGE: 13,
-      TRUMP: 0.001
-    },
-    defaultMinimum: 0.001
+    // Minimum amounts are now fetched from Kraken API
+    // No hardcoded values needed
   }
 };
 
