@@ -14,7 +14,6 @@ class AutoSellService {
   // Process all balances on startup
   async processAllBalances() {
     logger.info('Starting initial balance processing');
-    
     try {
       const balances = await krakenService.getAccountBalance();
       await this.handleBalanceUpdate(balances, true);
@@ -28,6 +27,18 @@ class AutoSellService {
         },
         timestamp: new Date().toISOString()
       });
+      // Send a snapshot log to the API endpoint (do not crash on error)
+      if (config.logging.api.enabled) {
+        try {
+          await sendLogToApi({
+            event: 'snapshot',
+            balances,
+            timestamp: new Date().toISOString()
+          });
+        } catch (err) {
+          logger.error('Failed to send snapshot log to API', { error: err.message });
+        }
+      }
     } catch (err) {
       logger.error('Error processing initial balances', {
         error: err.message,
@@ -120,16 +131,20 @@ class AutoSellService {
     // For updates, only process if it's a new deposit (amount increased)
     if (!isSnapshot && newAmount > oldAmount && newAmount > 0) {
       logger.info(`Processing new deposit: ${asset} ${depositAmount}`);
-      // Log the deposit event
+      // Log the deposit event (do not crash on error)
       if (config.logging.api.enabled) {
-        await sendLogToApi({
-          event: 'deposit',
-          asset: convertedAsset,
-          depositAmount,
-          newBalance: newAmount,
-          timestamp: new Date().toISOString(),
-          saleTriggered: false
-        });
+        try {
+          await sendLogToApi({
+            event: 'deposit',
+            asset: convertedAsset,
+            depositAmount,
+            newBalance: newAmount,
+            timestamp: new Date().toISOString(),
+            saleTriggered: false
+          });
+        } catch (err) {
+          logger.error('Failed to send deposit log to API', { error: err.message });
+        }
       }
       // Try to process a sale (may or may not trigger)
       saleTriggered = await this.processBalance(convertedAsset, depositAmount);
@@ -198,16 +213,20 @@ class AutoSellService {
         pair,
         txid: order.txid
       });
-      // Log the sale event
+      // Log the sale event (do not crash on error)
       if (config.logging.api.enabled) {
-        await sendLogToApi({
-          event: 'sale',
-          asset,
-          amount: totalAmount,
-          pair,
-          txid: order.txid,
-          timestamp: new Date().toISOString()
-        });
+        try {
+          await sendLogToApi({
+            event: 'sale',
+            asset,
+            amount: totalAmount,
+            pair,
+            txid: order.txid,
+            timestamp: new Date().toISOString()
+          });
+        } catch (err) {
+          logger.error('Failed to send sale log to API', { error: err.message });
+        }
       }
       // Monitor order status
       setTimeout(async () => {
