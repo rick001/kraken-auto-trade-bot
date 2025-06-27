@@ -210,7 +210,7 @@ class WebSocketService {
     });
 
     privateWs.on('pong', () => {
-      logger.debug('WebSocket pong received');
+      // Removed: logger.debug('WebSocket pong received');
     });
 
     return privateWs;
@@ -269,13 +269,7 @@ class WebSocketService {
   handleHeartbeatMessage() {
     const now = Date.now();
     this.lastHeartbeatTime = now;
-    
-    if (now - this.lastHeartbeatLog > 300000) { // 5 minutes instead of 30 seconds
-      logger.debug('WebSocket heartbeat received', {
-        connectionTime: Math.floor((now - this.lastHeartbeatLog) / 1000) + 's'
-      });
-      this.lastHeartbeatLog = now;
-    }
+    this.lastHeartbeatLog = now;
   }
 
   // Start heartbeat monitoring
