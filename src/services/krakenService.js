@@ -330,7 +330,13 @@ class KrakenService {
       `${pairAsset}USDT`, // XDGUSDT (for DOGE)
       `${pairAsset}USDC`, // XDGUSDC (for DOGE)
       `${pairAsset}${pairQuote}`, // XDGUSD (for DOGE with converted USD)
-      `${asset}${pairQuote}` // DOGEUSD (for DOGE with converted USD)
+      `${asset}${pairQuote}`, // DOGEUSD (for DOGE with converted USD)
+      // Special handling for USDT
+      ...(asset === 'USDT' ? ['USDTUSD', 'USDTUSDC', 'USDTUSDT'] : []),
+      // Special handling for USDC
+      ...(asset === 'USDC' ? ['USDCUSD', 'USDCUSDT', 'USDCUSDC'] : []),
+      // Special handling for USDTZUSD
+      ...(asset === 'USDT' ? ['USDTZUSD'] : [])
     ];
     
     const hasPair = pairNames.some(pairName => !!this.pairs[pairName]);
@@ -366,7 +372,11 @@ class KrakenService {
       `${pairAsset}USDT`, // XDGUSDT (for DOGE)
       `${pairAsset}USDC`, // XDGUSDC (for DOGE)
       `${pairAsset}${pairQuote}`, // XDGUSD (for DOGE with converted USD)
-      `${asset}${pairQuote}` // DOGEUSD (for DOGE with converted USD)
+      `${asset}${pairQuote}`, // DOGEUSD (for DOGE with converted USD)
+      // Special handling for USDT
+      ...(asset === 'USDT' ? ['USDTUSD', 'USDTUSDC', 'USDTUSDT', 'USDTZUSD'] : []),
+      // Special handling for USDC
+      ...(asset === 'USDC' ? ['USDCUSD', 'USDCUSDT', 'USDCUSDC'] : [])
     ];
     
     const foundPair = pairNames.find(pairName => !!this.pairs[pairName]);
@@ -406,7 +416,7 @@ class KrakenService {
       'DOGE': 'XDG',  // DOGE uses XDG in pair names, not XXDG
       'BTC': 'XBT',   // BTC uses XBT in pair names, not XXBT
       'ETH': 'ETH',   // ETH uses ETH in pair names
-      'USD': 'USD',   // USD uses USD in pair names, not ZUSD
+      'USD': 'ZUSD',  // USD uses ZUSD in pair names, not USD
       'USDT': 'USDT',
       'USDC': 'USDC',
       'EUR': 'EUR',   // EUR uses EUR in pair names, not ZEUR

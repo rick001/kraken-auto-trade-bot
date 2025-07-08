@@ -30,6 +30,29 @@ router.get('/debug/balance/:asset', async (req, res) => {
   }
 });
 
+// Debug endpoint to check available pairs for an asset
+router.get('/debug/pairs/:asset', async (req, res) => {
+  try {
+    const { asset } = req.params;
+    const pairs = krakenService.getTradablePairs();
+    const assetPairs = pairs.filter(p => p.includes(asset));
+    const hasMarketPair = krakenService.hasMarketPair(asset);
+    const marketPair = krakenService.getMarketPair(asset);
+    
+    res.json({
+      asset,
+      hasMarketPair,
+      marketPair,
+      availablePairs: assetPairs,
+      totalPairs: pairs.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error in debug pairs endpoint:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Trade routes
 router.get('/trades/:txid', tradeController.getTrade);
 router.post('/trades/batch', tradeController.getBatchTrades);
