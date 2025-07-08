@@ -244,7 +244,9 @@ class WebSocketService {
             type: update.type,
             amount: update.amount,
             balance: update.balance,
-            ledgerId: update.ledger_id
+            ledgerId: update.ledger_id,
+            refId: update.ref_id,
+            timestamp: update.timestamp
           });
           
           // Emit individual balance update event with full update information
@@ -252,7 +254,14 @@ class WebSocketService {
           
           // If it's a deposit, emit deposit event
           if (update.type === 'deposit' && update.amount > 0) {
-            logger.info(`Processing new deposit: ${update.asset} ${update.amount}`);
+            logger.info(`🎉 DEPOSIT DETECTED: ${update.asset} ${update.amount}`, {
+              asset: update.asset,
+              amount: update.amount,
+              balance: update.balance,
+              ledgerId: update.ledger_id,
+              refId: update.ref_id,
+              timestamp: update.timestamp
+            });
             this.emit('deposit', update.asset, update.amount);
           }
         }

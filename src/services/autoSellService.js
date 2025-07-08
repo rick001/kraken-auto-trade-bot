@@ -195,6 +195,39 @@ class AutoSellService {
       return false;
     }
 
+    // Check actual available balance before placing order
+    try {
+      const actualBalance = await krakenService.checkBalanceForAsset(asset);
+      const availableAmount = Math.min(totalAmount, actualBalance.totalBalance);
+      
+      if (availableAmount < minimumOrderSize) {
+        logger.info(`Skipping ${asset} - available balance too small`, { 
+          asset, 
+          requestedAmount: totalAmount,
+          availableAmount,
+          minimum: minimumOrderSize,
+          reason: 'insufficient_available_balance' 
+        });
+        return false;
+      }
+      
+      logger.info(`Using available balance for ${asset}`, {
+        asset,
+        requestedAmount: totalAmount,
+        availableAmount,
+        actualBalance: actualBalance.totalBalance
+      });
+      
+      // Use the smaller of requested amount or available balance
+      totalAmount = availableAmount;
+    } catch (err) {
+      logger.warn(`Could not verify balance for ${asset}, proceeding with original amount`, {
+        asset,
+        amount: totalAmount,
+        error: err.message
+      });
+    }
+
     // Place sell order
     try {
       const pair = krakenService.getMarketPair(asset);
@@ -222,13 +255,20 @@ class AutoSellService {
       }
       // Monitor order status
       setTimeout(async () => {
-        const orderStatus = await krakenService.getOrderStatus(order.txid);
-        if (orderStatus) {
-          logger.info(`Order ${order.txid} status updated`, {
-            status: orderStatus.status,
-            usdValue: orderStatus.usdValue,
-            volume: orderStatus.volume,
-            fee: orderStatus.fee
+        try {
+          const orderStatus = await krakenService.getOrderStatus(order.txid);
+          if (orderStatus) {
+            logger.info(`Order ${order.txid} status updated`, {
+              status: orderStatus.status,
+              usdValue: orderStatus.usdValue,
+              volume: orderStatus.volume,
+              fee: orderStatus.fee
+            });
+          }
+        } catch (err) {
+          logger.warn(`Could not get order status for ${order.txid}`, {
+            error: err.message,
+            txid: order.txid
           });
         }
       }, 5000);

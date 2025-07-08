@@ -238,6 +238,44 @@ class KrakenService {
     );
   }
 
+  // Manually check balance for debugging
+  async checkBalanceForAsset(asset) {
+    try {
+      await this.rateLimiter.waitForSlot();
+      const balanceResp = await this.kraken.api('Balance');
+      const balance = balanceResp.result;
+      
+      // Convert asset names for comparison
+      const krakenAsset = this.getOriginalAssetName(asset);
+      const standardAsset = this.getStandardAssetName(asset);
+      
+      const krakenBalance = parseFloat(balance[krakenAsset] || 0);
+      const standardBalance = parseFloat(balance[standardAsset] || 0);
+      
+      logger.info(`Manual balance check for ${asset}:`, {
+        asset,
+        krakenAsset,
+        standardAsset,
+        krakenBalance,
+        standardBalance,
+        krakenBalanceRaw: balance[krakenAsset],
+        standardBalanceRaw: balance[standardAsset],
+        allBalances: balance
+      });
+      
+      return {
+        krakenAsset,
+        standardAsset,
+        krakenBalance,
+        standardBalance,
+        totalBalance: krakenBalance + standardBalance
+      };
+    } catch (err) {
+      logger.error(`Error checking balance for ${asset}:`, err.message);
+      return null;
+    }
+  }
+
   // Place a market sell order
   async placeMarketSellOrder(pair, volume) {
     return withRetry(
