@@ -108,7 +108,7 @@ const swaggerDocument = {
     }
   },
   paths: {
-    '/api/trade/{txid}': {
+    '/api/trades/{txid}': {
       get: {
         summary: 'Get details for a single trade/order by transaction ID',
         description: 'Retrieves comprehensive information about a specific trade or order, including all associated trades, fees, and timing details.',

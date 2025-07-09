@@ -4,6 +4,7 @@ const tradeController = require('../controllers/tradeController');
 const autoSellController = require('../controllers/autoSellController');
 const krakenService = require('../services/krakenService');
 const logger = require('../utils/logger');
+const docsRouter = require('./docs');
 
 // Health check
 router.get('/health', (req, res) => {
@@ -65,5 +66,8 @@ router.get('/auto-sell/balances', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// API Documentation routes
+router.use('/', docsRouter);
 
 module.exports = router; 
