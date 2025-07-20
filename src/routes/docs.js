@@ -104,6 +104,25 @@ const swaggerDocument = {
           error: { type: 'string', description: 'Error type', example: 'Order not found' },
           message: { type: 'string', description: 'Detailed error message', example: 'The specified order was not found in the system' }
         }
+      },
+      Balance: {
+        type: 'object',
+        properties: {
+          asset: { type: 'string', description: 'Asset code (Kraken format)', example: 'XXDG' },
+          balance: { type: 'string', description: 'Balance amount as string', example: '12.47691255' },
+          balanceValue: { type: 'number', description: 'Balance amount as number', example: 12.47691255 },
+          hasBalance: { type: 'boolean', description: 'Whether the asset has a non-zero balance', example: true },
+          timestamp: { type: 'string', format: 'date-time', description: 'Response timestamp', example: '2025-07-18T06:39:27.400Z' }
+        }
+      },
+      BalanceError: {
+        type: 'object',
+        properties: {
+          error: { type: 'string', description: 'Error type', example: 'Asset not found' },
+          asset: { type: 'string', description: 'Requested asset name', example: 'INVALID' },
+          availableAssets: { type: 'array', items: { type: 'string' }, description: 'List of available assets', example: ['SOL', 'TRUMP', 'USDC', 'USDT', 'XETH', 'XXBT', 'XXDG', 'XXRP', 'ZUSD'] },
+          timestamp: { type: 'string', format: 'date-time', description: 'Response timestamp', example: '2025-07-18T06:39:27.400Z' }
+        }
       }
     }
   },
@@ -215,6 +234,48 @@ const swaggerDocument = {
             content: {
               'application/json': {
                 schema: { $ref: '#/components/schemas/AutoSellStatus' }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/api/balance/{asset}': {
+      get: {
+        summary: 'Get current balance for a specific asset',
+        description: 'Retrieves the current balance for a specific asset in your Kraken account. Supports case-insensitive asset names and provides both string and numeric balance values.',
+        parameters: [
+          {
+            name: 'asset',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Asset code to check balance for (case-insensitive)',
+            example: 'XXDG'
+          }
+        ],
+        responses: {
+          200: {
+            description: 'Asset balance retrieved successfully',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/Balance' }
+              }
+            }
+          },
+          404: {
+            description: 'Asset not found',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/BalanceError' }
+              }
+            }
+          },
+          500: {
+            description: 'Internal server error',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/Error' }
               }
             }
           }

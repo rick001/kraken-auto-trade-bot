@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const tradeController = require('../controllers/tradeController');
 const autoSellController = require('../controllers/autoSellController');
+const autoSellService = require('../services/autoSellService');
 const krakenService = require('../services/krakenService');
 const logger = require('../utils/logger');
 const docsRouter = require('./docs');
@@ -62,9 +63,49 @@ router.post('/trades/batch', tradeController.getBatchTrades);
 router.get('/auto-sell/status', autoSellController.getStatus);
 router.get('/auto-sell/balances', (req, res) => {
   res.json({
-    balances: autoSellController.getCurrentBalances(),
+    balances: autoSellService.getCurrentBalances(),
     timestamp: new Date().toISOString()
   });
+});
+
+// Get current balance for a specific asset
+router.get('/balance/:asset', async (req, res) => {
+  try {
+    const { asset } = req.params;
+    const currentBalances = autoSellService.getCurrentBalances();
+    
+    // Try to find the asset in current balances (case-insensitive)
+    const assetKey = Object.keys(currentBalances).find(
+      key => key.toUpperCase() === asset.toUpperCase()
+    );
+    
+    if (!assetKey) {
+      return res.status(404).json({
+        error: 'Asset not found',
+        asset: asset,
+        availableAssets: Object.keys(currentBalances),
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    const balance = currentBalances[assetKey];
+    const balanceValue = parseFloat(balance) || 0;
+    
+    res.json({
+      asset: assetKey,
+      balance: balance,
+      balanceValue: balanceValue,
+      hasBalance: balanceValue > 0,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    logger.error('Error in balance endpoint:', error);
+    res.status(500).json({ 
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // API Documentation routes
