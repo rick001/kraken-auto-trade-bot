@@ -13,6 +13,11 @@ class WebSocketService {
     this.heartbeatCheckInterval = null;
     this.connectionStartTime = Date.now();
     this.pingInterval = null;
+    
+    // Add proper connection state management
+    this.connectionState = 'disconnected'; // 'disconnected', 'connecting', 'connected', 'reconnecting'
+    this.currentToken = null;
+    this.reconnectionInProgress = false;
   }
 
   // Start WebSocket connection
@@ -26,12 +31,15 @@ class WebSocketService {
       }
       logger.info('🔑 WebSocket token obtained successfully');
       
+      this.currentToken = token;
+      this.connectionState = 'connecting';
       this.wsInstance = await this.startPrivateWebSocket(token);
     } catch (err) {
       logger.error('❌ Error in WebSocket setup', {
         error: err.message,
         stack: err.stack
       });
+      this.connectionState = 'disconnected';
       setTimeout(() => this.start(), config.websocket.reconnectDelay);
     }
   }
@@ -47,6 +55,12 @@ class WebSocketService {
         tokenPreview: token.substring(0, 12) + '...',
         timestamp: new Date().toISOString()
       });
+      
+      // Update connection state
+      this.connectionState = 'connected';
+      this.reconnectionInProgress = false;
+      this.reconnectAttempts = 0;
+      this.connectionStartTime = Date.now();
       
       this.startHeartbeatMonitoring();
       
@@ -141,21 +155,27 @@ class WebSocketService {
         reconnectAttempts: this.reconnectAttempts
       });
       
+      // Update connection state
+      this.connectionState = 'disconnected';
+      
+      // Clean up intervals
       if (this.pingInterval) {
         clearInterval(this.pingInterval);
+        this.pingInterval = null;
       }
       
       if (this.heartbeatCheckInterval) {
         clearInterval(this.heartbeatCheckInterval);
+        this.heartbeatCheckInterval = null;
       }
       
       // Prevent multiple simultaneous reconnection attempts
-      if (this.isReconnecting) {
+      if (this.reconnectionInProgress) {
         logger.warn('Reconnection already in progress, skipping');
         return;
       }
       
-      this.isReconnecting = true;
+      this.reconnectionInProgress = true;
       
       // Calculate exponential backoff delay
       const delay = Math.min(
@@ -171,13 +191,15 @@ class WebSocketService {
             delay
           });
           
-          const newToken = await krakenService.getWebSocketToken();
-          if (newToken) {
-            await this.startPrivateWebSocket(newToken);
-            this.reconnectAttempts = 0; // Reset on successful connection
+          // Always get a fresh token for reconnection attempts
+          const freshToken = await krakenService.getWebSocketToken();
+          if (freshToken) {
+            this.currentToken = freshToken;
+            this.connectionState = 'reconnecting';
+            await this.startPrivateWebSocket(freshToken);
             logger.info('WebSocket reconnection successful');
           } else {
-            throw new Error('Failed to obtain new WebSocket token');
+            throw new Error('Failed to obtain fresh WebSocket token');
           }
         } catch (err) {
           this.reconnectAttempts++;
@@ -189,19 +211,37 @@ class WebSocketService {
           });
           
           if (this.reconnectAttempts < config.websocket.maxReconnectAttempts) {
-            // Schedule next reconnection attempt
-            setTimeout(() => {
-              this.isReconnecting = false;
-              this.startPrivateWebSocket(token);
+            // Schedule next reconnection attempt with fresh token
+            setTimeout(async () => {
+              try {
+                const freshToken = await krakenService.getWebSocketToken();
+                if (freshToken) {
+                  this.currentToken = freshToken;
+                  this.connectionState = 'reconnecting';
+                  await this.startPrivateWebSocket(freshToken);
+                } else {
+                  throw new Error('Failed to obtain fresh WebSocket token for retry');
+                }
+              } catch (retryErr) {
+                logger.error('Retry reconnection failed', {
+                  error: retryErr.message,
+                  attempt: this.reconnectAttempts
+                });
+                this.reconnectionInProgress = false;
+              }
             }, delay);
           } else {
             logger.error('Max reconnection attempts reached, giving up', {
               totalAttempts: this.reconnectAttempts
             });
-            this.isReconnecting = false;
+            this.reconnectionInProgress = false;
+            this.connectionState = 'disconnected';
           }
         } finally {
-          this.isReconnecting = false;
+          // Only reset reconnection flag if we're not retrying
+          if (this.reconnectAttempts >= config.websocket.maxReconnectAttempts) {
+            this.reconnectionInProgress = false;
+          }
         }
       }, delay);
     });
@@ -384,9 +424,58 @@ class WebSocketService {
     return this.wsInstance;
   }
 
-  // Check if connected
+  // Check if connected (preserve existing method)
   isConnected() {
     return !!(this.wsInstance && this.wsInstance.readyState === WebSocket.OPEN);
+  }
+
+  // Enhanced connection state methods
+  getConnectionState() {
+    return this.connectionState;
+  }
+
+  isReconnecting() {
+    return this.reconnectionInProgress;
+  }
+
+  getReconnectAttempts() {
+    return this.reconnectAttempts;
+  }
+
+  getConnectionDuration() {
+    if (this.connectionState === 'connected' && this.connectionStartTime) {
+      return Math.floor((Date.now() - this.connectionStartTime) / 1000);
+    }
+    return 0;
+  }
+
+  // Force reconnection (useful for manual recovery)
+  async forceReconnect() {
+    if (this.reconnectionInProgress) {
+      logger.warn('Reconnection already in progress, skipping force reconnect');
+      return false;
+    }
+
+    logger.info('Force reconnecting WebSocket connection...');
+    this.reconnectionInProgress = true;
+    this.connectionState = 'reconnecting';
+    
+    try {
+      const freshToken = await krakenService.getWebSocketToken();
+      if (freshToken) {
+        this.currentToken = freshToken;
+        await this.startPrivateWebSocket(freshToken);
+        logger.info('Force reconnection successful');
+        return true;
+      } else {
+        throw new Error('Failed to obtain fresh WebSocket token for force reconnect');
+      }
+    } catch (err) {
+      logger.error('Force reconnection failed', { error: err.message });
+      this.reconnectionInProgress = false;
+      this.connectionState = 'disconnected';
+      return false;
+    }
   }
 
   // Event emitter methods (to be implemented by the auto-sell service)
