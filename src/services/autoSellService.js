@@ -10,6 +10,8 @@ class AutoSellService {
     this.isProcessingBalance = false; // Add processing lock
     this.initialProcessingComplete = false;
     this.lastRequestTime = Date.now();
+    this.recursionCounts = {}; // Track recursion attempts per asset
+    this.maxRecursionAttempts = 3; // Maximum retry attempts for partial fills
   }
 
   // Process all balances on startup
@@ -185,8 +187,25 @@ class AutoSellService {
   }
 
   // Process a single balance for selling
-  async processBalance(asset, totalAmount) {
-    logger.info(`Processing ${asset} balance`, { amount: totalAmount, asset });
+  async processBalance(asset, totalAmount, recursionLevel = 0) {
+    logger.info(`Processing ${asset} balance`, { 
+      amount: totalAmount, 
+      asset, 
+      recursionLevel,
+      maxRecursion: this.maxRecursionAttempts
+    });
+
+    // Prevent infinite recursion
+    if (recursionLevel >= this.maxRecursionAttempts) {
+      logger.warn(`Maximum recursion attempts reached for ${asset}`, {
+        asset,
+        amount: totalAmount,
+        recursionLevel,
+        maxRecursion: this.maxRecursionAttempts,
+        reason: 'max_recursion_exceeded'
+      });
+      return false;
+    }
 
     // Skip if it's the target fiat currency (original or converted)
     const fiat = config.kraken.targetFiat;
@@ -269,7 +288,8 @@ class AutoSellService {
           amount: totalAmount,
           pair,
           txid: order.txid,
-          attempt
+          attempt,
+          recursionLevel
         });
         
         // Log the sale event (do not crash on error)
@@ -288,7 +308,7 @@ class AutoSellService {
           }
         }
         
-        // Monitor order status
+        // Monitor order status with recursion protection
         setTimeout(async () => {
           try {
             const orderStatus = await krakenService.getOrderStatus(order.txid);
@@ -297,20 +317,49 @@ class AutoSellService {
                 status: orderStatus.status,
                 usdValue: orderStatus.usdValue,
                 volume: orderStatus.volume,
-                fee: orderStatus.fee
+                fee: orderStatus.fee,
+                recursionLevel
               });
               
-              // If order was partially filled, try to sell remaining balance
+              // If order was partially filled, try to sell remaining balance with recursion protection
               if (orderStatus.status === 'closed' && orderStatus.volume < totalAmount) {
                 const remainingAmount = totalAmount - orderStatus.volume;
-                logger.info(`Order partially filled, attempting to sell remaining ${remainingAmount} ${asset}`);
-                setTimeout(() => this.processBalance(asset, remainingAmount), 2000);
+                logger.info(`Order partially filled, attempting to sell remaining ${remainingAmount} ${asset}`, {
+                  asset,
+                  originalAmount: totalAmount,
+                  filledAmount: orderStatus.volume,
+                  remainingAmount,
+                  recursionLevel,
+                  maxRecursion: this.maxRecursionAttempts
+                });
+                
+                // Check if we should attempt another sale
+                if (recursionLevel < this.maxRecursionAttempts) {
+                  // Use exponential backoff: 2s, 4s, 8s for retries
+                  const delay = Math.min(2000 * Math.pow(2, recursionLevel), 30000);
+                  logger.info(`Scheduling retry for remaining ${remainingAmount} ${asset} in ${delay}ms`, {
+                    asset,
+                    remainingAmount,
+                    recursionLevel: recursionLevel + 1,
+                    delay
+                  });
+                  
+                  setTimeout(() => this.processBalance(asset, remainingAmount, recursionLevel + 1), delay);
+                } else {
+                  logger.warn(`Maximum recursion attempts reached for ${asset}, not retrying partial fill`, {
+                    asset,
+                    remainingAmount,
+                    recursionLevel,
+                    maxRecursion: this.maxRecursionAttempts
+                  });
+                }
               }
             }
           } catch (err) {
             logger.warn(`Could not get order status for ${order.txid}`, {
               error: err.message,
-              txid: order.txid
+              txid: order.txid,
+              recursionLevel
             });
           }
         }, 5000);
@@ -323,7 +372,8 @@ class AutoSellService {
           amount: totalAmount,
           error: err.message,
           attempt,
-          maxRetries
+          maxRetries,
+          recursionLevel
         });
         
         if (attempt < maxRetries) {
@@ -337,7 +387,8 @@ class AutoSellService {
       asset,
       amount: totalAmount,
       error: lastError.message,
-      stack: lastError.stack
+      stack: lastError.stack,
+      recursionLevel
     });
     return false;
   }
