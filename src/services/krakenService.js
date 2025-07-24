@@ -334,35 +334,36 @@ class KrakenService {
 
   // Check if asset has a market pair
   hasMarketPair(asset) {
-    // Try different pair name formats for Kraken
-    // Use pair names (not asset names) for pair lookups
-    const pairAsset = this.getPairName(asset);
-    const pairQuote = this.getPairName(config.kraken.targetFiat);
+    // Skip target fiat currency
+    if (asset === config.kraken.targetFiat) {
+      return false;
+    }
+
+    // Get Kraken asset name for the asset
+    const krakenAsset = this.getOriginalAssetName(asset);
+    const krakenQuote = this.getOriginalAssetName(config.kraken.targetFiat);
     
-    // Prioritize USD pairs over USDT pairs when target is USD
+    // Try different pair name formats for Kraken
     const pairNames = [
-      // First priority: Direct target currency pairs
-      `${asset}${config.kraken.targetFiat}`, // SOLUSD
-      `${pairAsset}${config.kraken.targetFiat}`, // XDGUSD (for DOGE)
-      `${asset}${pairQuote}`, // DOGEUSD (for DOGE with converted USD)
-      `${pairAsset}${pairQuote}`, // XDGUSD (for DOGE with converted USD)
+      // Direct asset-quote pairs (most common)
+      `${krakenAsset}${krakenQuote}`, // XETHZUSD, XDGZUSD
+      `${asset}${config.kraken.targetFiat}`, // ETHUSD, DOGEUSD
       
-      // Second priority: Standard USD pairs (most common)
-      `${asset}USD`, // SOLUSD
-      `${pairAsset}USD`, // XDGUSD (for DOGE)
+      // Alternative formats
+      `${krakenAsset}${config.kraken.targetFiat}`, // XETHUSD, XDGUSD
+      `${asset}${krakenQuote}`, // ETHZUSD, DOGEZUSD
       
-      // Third priority: Alternative stablecoins (only if target is not USD)
-      ...(config.kraken.targetFiat !== 'USD' ? [
-        `${asset}USDT`, // SOLUSDT (alternative)
-        `${asset}USDC`, // SOLUSDC (alternative)
-        `${pairAsset}USDT`, // XDGUSDT (for DOGE)
-        `${pairAsset}USDC`, // XDGUSDC (for DOGE)
-      ] : []),
+      // Standard USD pairs
+      `${asset}USD`, // ETHUSD, DOGEUSD
+      `${krakenAsset}USD`, // XETHUSD, XDGUSD
       
-      // Special handling for USDT
-      ...(asset === 'USDT' ? ['USDTUSD', 'USDTUSDC', 'USDTUSDT', 'USDTZUSD'] : []),
-      // Special handling for USDC
-      ...(asset === 'USDC' ? ['USDCUSD', 'USDCUSDT', 'USDCUSDC'] : [])
+      // Special handling for DOGE (uses XDG in pair names)
+      ...(asset === 'DOGE' ? ['XDGUSD', 'XDGZUSD'] : []),
+      ...(krakenAsset === 'XXDG' ? ['XDGUSD', 'XDGZUSD'] : []),
+      
+      // Special handling for ETH (uses XETH in pair names)
+      ...(asset === 'ETH' ? ['XETHUSD', 'XETHZUSD'] : []),
+      ...(krakenAsset === 'XETH' ? ['XETHUSD', 'XETHZUSD'] : [])
     ];
     
     const hasPair = pairNames.some(pairName => !!this.pairs[pairName]);
@@ -370,48 +371,49 @@ class KrakenService {
     
     logger.debug(`Checking market pair for ${asset}`, {
       asset,
-      pairAsset,
+      krakenAsset,
       targetFiat: config.kraken.targetFiat,
-      pairQuote,
+      krakenQuote,
       triedPairs: pairNames,
       hasPair,
       foundPair,
-      availablePairs: Object.keys(this.pairs).filter(p => p.includes(asset) || p.includes(pairAsset)).slice(0, 5)
+      availablePairs: Object.keys(this.pairs).filter(p => p.includes(asset) || p.includes(krakenAsset)).slice(0, 5)
     });
     return hasPair;
   }
 
   // Get market pair name for an asset
   getMarketPair(asset) {
-    // Try different pair name formats for Kraken
-    // Use pair names (not asset names) for pair lookups
-    const pairAsset = this.getPairName(asset);
-    const pairQuote = this.getPairName(config.kraken.targetFiat);
+    // Skip target fiat currency
+    if (asset === config.kraken.targetFiat) {
+      return null;
+    }
+
+    // Get Kraken asset name for the asset
+    const krakenAsset = this.getOriginalAssetName(asset);
+    const krakenQuote = this.getOriginalAssetName(config.kraken.targetFiat);
     
-    // Prioritize USD pairs over USDT pairs when target is USD
+    // Try different pair name formats for Kraken
     const pairNames = [
-      // First priority: Direct target currency pairs
-      `${asset}${config.kraken.targetFiat}`, // SOLUSD
-      `${pairAsset}${config.kraken.targetFiat}`, // XDGUSD (for DOGE)
-      `${asset}${pairQuote}`, // DOGEUSD (for DOGE with converted USD)
-      `${pairAsset}${pairQuote}`, // XDGUSD (for DOGE with converted USD)
+      // Direct asset-quote pairs (most common)
+      `${krakenAsset}${krakenQuote}`, // XETHZUSD, XDGZUSD
+      `${asset}${config.kraken.targetFiat}`, // ETHUSD, DOGEUSD
       
-      // Second priority: Standard USD pairs (most common)
-      `${asset}USD`, // SOLUSD
-      `${pairAsset}USD`, // XDGUSD (for DOGE)
+      // Alternative formats
+      `${krakenAsset}${config.kraken.targetFiat}`, // XETHUSD, XDGUSD
+      `${asset}${krakenQuote}`, // ETHZUSD, DOGEZUSD
       
-      // Third priority: Alternative stablecoins (only if target is not USD)
-      ...(config.kraken.targetFiat !== 'USD' ? [
-        `${asset}USDT`, // SOLUSDT (alternative)
-        `${asset}USDC`, // SOLUSDC (alternative)
-        `${pairAsset}USDT`, // XDGUSDT (for DOGE)
-        `${pairAsset}USDC`, // XDGUSDC (for DOGE)
-      ] : []),
+      // Standard USD pairs
+      `${asset}USD`, // ETHUSD, DOGEUSD
+      `${krakenAsset}USD`, // XETHUSD, XDGUSD
       
-      // Special handling for USDT
-      ...(asset === 'USDT' ? ['USDTUSD', 'USDTUSDC', 'USDTUSDT', 'USDTZUSD'] : []),
-      // Special handling for USDC
-      ...(asset === 'USDC' ? ['USDCUSD', 'USDCUSDT', 'USDCUSDC'] : [])
+      // Special handling for DOGE (uses XDG in pair names)
+      ...(asset === 'DOGE' ? ['XDGUSD', 'XDGZUSD'] : []),
+      ...(krakenAsset === 'XXDG' ? ['XDGUSD', 'XDGZUSD'] : []),
+      
+      // Special handling for ETH (uses XETH in pair names)
+      ...(asset === 'ETH' ? ['XETHUSD', 'XETHZUSD'] : []),
+      ...(krakenAsset === 'XETH' ? ['XETHUSD', 'XETHZUSD'] : [])
     ];
     
     const foundPair = pairNames.find(pairName => !!this.pairs[pairName]);
@@ -420,9 +422,10 @@ class KrakenService {
     if (foundPair) {
       logger.debug(`Found market pair for ${asset}: ${foundPair}`, {
         asset,
+        krakenAsset,
         targetFiat: config.kraken.targetFiat,
         foundPair,
-        availablePairs: Object.keys(this.pairs).filter(p => p.includes(asset) || p.includes(pairAsset)).slice(0, 5)
+        availablePairs: Object.keys(this.pairs).filter(p => p.includes(asset) || p.includes(krakenAsset)).slice(0, 5)
       });
     }
     
