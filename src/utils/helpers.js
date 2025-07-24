@@ -46,21 +46,111 @@ function isRetryableError(error) {
 class RateLimiter {
   constructor() {
     this.requests = [];
+    this.maxArraySize = 1000; // Prevent unbounded growth
+    this.lastCleanup = Date.now();
+    this.cleanupInterval = 60000; // Cleanup every minute
   }
 
   async waitForSlot() {
     const now = Date.now();
-    this.requests = this.requests.filter(time => now - time < config.kraken.rateLimit.period);
     
+    // Periodic cleanup to prevent memory leaks
+    if (now - this.lastCleanup > this.cleanupInterval) {
+      this._cleanup();
+      this.lastCleanup = now;
+    }
+    
+    // Remove old timestamps efficiently
+    const cutoffTime = now - config.kraken.rateLimit.period;
+    let removedCount = 0;
+    
+    // Efficiently remove old entries from the beginning
+    while (this.requests.length > 0 && this.requests[0] < cutoffTime) {
+      this.requests.shift();
+      removedCount++;
+    }
+    
+    // Log cleanup if significant
+    if (removedCount > 0) {
+      logger.debug(`RateLimiter cleanup: removed ${removedCount} old timestamps`, {
+        remainingCount: this.requests.length,
+        cutoffTime: new Date(cutoffTime).toISOString()
+      });
+    }
+    
+    // Check if we need to wait
     if (this.requests.length >= config.kraken.rateLimit.maxRequests) {
       const oldestRequest = this.requests[0];
       const waitTime = config.kraken.rateLimit.period - (now - oldestRequest);
+      
       if (waitTime > 0) {
+        logger.debug(`Rate limit reached, waiting ${waitTime}ms`, {
+          currentRequests: this.requests.length,
+          maxRequests: config.kraken.rateLimit.maxRequests,
+          oldestRequest: new Date(oldestRequest).toISOString()
+        });
+        
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
     }
     
+    // Add current request timestamp
     this.requests.push(now);
+    
+    // Emergency cleanup if array gets too large
+    if (this.requests.length > this.maxArraySize) {
+      logger.warn(`RateLimiter array size exceeded limit, performing emergency cleanup`, {
+        currentSize: this.requests.length,
+        maxSize: this.maxArraySize,
+        oldestTimestamp: new Date(this.requests[0]).toISOString(),
+        newestTimestamp: new Date(this.requests[this.requests.length - 1]).toISOString()
+      });
+      
+      // Keep only the most recent entries
+      const keepCount = Math.floor(this.maxArraySize * 0.8); // Keep 80% of max size
+      this.requests = this.requests.slice(-keepCount);
+      
+      logger.info(`RateLimiter emergency cleanup completed`, {
+        newSize: this.requests.length,
+        removedCount: this.maxArraySize - this.requests.length
+      });
+    }
+  }
+
+  // Internal cleanup method
+  _cleanup() {
+    const now = Date.now();
+    const cutoffTime = now - config.kraken.rateLimit.period;
+    const originalSize = this.requests.length;
+    
+    // Remove all timestamps older than the rate limit period
+    this.requests = this.requests.filter(time => time >= cutoffTime);
+    
+    const removedCount = originalSize - this.requests.length;
+    
+    if (removedCount > 0) {
+      logger.debug(`RateLimiter periodic cleanup: removed ${removedCount} old timestamps`, {
+        originalSize,
+        newSize: this.requests.length,
+        cutoffTime: new Date(cutoffTime).toISOString()
+      });
+    }
+  }
+
+  // Get current rate limiter status (for debugging)
+  getStatus() {
+    const now = Date.now();
+    const cutoffTime = now - config.kraken.rateLimit.period;
+    const activeRequests = this.requests.filter(time => time >= cutoffTime).length;
+    
+    return {
+      totalRequests: this.requests.length,
+      activeRequests,
+      maxRequests: config.kraken.rateLimit.maxRequests,
+      period: config.kraken.rateLimit.period,
+      lastCleanup: new Date(this.lastCleanup).toISOString(),
+      isRateLimited: activeRequests >= config.kraken.rateLimit.maxRequests
+    };
   }
 }
 

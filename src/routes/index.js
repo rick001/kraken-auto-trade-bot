@@ -64,6 +64,20 @@ router.get('/debug/pairs/:asset', async (req, res) => {
   }
 });
 
+// Debug endpoint to check rate limiter status
+router.get('/debug/rate-limiter', (req, res) => {
+  try {
+    const rateLimiterStatus = krakenService.rateLimiter.getStatus();
+    res.json({
+      rateLimiter: rateLimiterStatus,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error in debug rate limiter endpoint:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Trade routes
 router.get('/trades/:txid', tradeController.getTrade);
 router.post('/trades/batch', tradeController.getBatchTrades);
