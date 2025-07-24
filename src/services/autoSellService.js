@@ -6,8 +6,9 @@ const { sendLogToApi, convertAssetName } = require('../utils/helpers');
 class AutoSellService {
   constructor() {
     this.currentBalances = {};
-    this.initialProcessingComplete = false;
     this.isProcessingSnapshot = false;
+    this.isProcessingBalance = false; // Add processing lock
+    this.initialProcessingComplete = false;
     this.lastRequestTime = Date.now();
   }
 
@@ -39,60 +40,87 @@ class AutoSellService {
 
   // Handle balance updates (both snapshot and real-time)
   async handleBalanceUpdate(balances, isSnapshot = false, updateInfo = null) {
-    if (this.isProcessingSnapshot && isSnapshot) {
-      logger.debug('Already processing snapshot, skipping');
+    // Prevent concurrent balance processing
+    if (this.isProcessingBalance) {
+      logger.debug('Balance processing already in progress, skipping this update', {
+        isSnapshot,
+        updateType: updateInfo?.type,
+        assetCount: Object.keys(balances).length
+      });
       return;
     }
 
-    this.isProcessingSnapshot = isSnapshot;
+    // Set processing lock
+    this.isProcessingBalance = true;
     
-    const changes = [];
-    const logData = {
-      timestamp: new Date().toISOString(),
-      eventType: isSnapshot ? 'snapshot' : 'update',
-      balances: balances,
-      changes: []
-    };
-
-    for (const [asset, amount] of Object.entries(balances)) {
-      const oldAmount = parseFloat(this.currentBalances[asset] || 0);
-      const newAmount = parseFloat(amount);
-      const changed = oldAmount !== newAmount;
-
-      if (changed) {
-        changes.push({ asset, oldAmount, newAmount });
-        
-        if (isSnapshot) {
-          logger.debug(`Processing balance for ${asset} (converted: ${convertAssetName(asset)})`, {
-            asset,
-            convertedAsset: convertAssetName(asset),
-            oldAmount,
-            newAmount,
-            changed
-          });
-        }
-
-        await this.processBalanceChange(asset, oldAmount, newAmount, isSnapshot, logData, updateInfo);
+    try {
+      // Existing snapshot protection (keep as is)
+      if (this.isProcessingSnapshot && isSnapshot) {
+        logger.debug('Already processing snapshot, skipping');
+        return;
       }
-    }
 
-    // Update current balances
-    this.currentBalances = { ...balances };
-
-    if (isSnapshot) {
-      logger.info('Balance snapshot processed:', {
-        changeCount: changes.length,
-        changes
-      });
+      this.isProcessingSnapshot = isSnapshot;
       
-      for (const change of changes) {
-        logger.info(`  ${change.asset}: ${change.oldAmount} -> ${change.newAmount}`);
-      }
-    }
+      const changes = [];
+      const logData = {
+        timestamp: new Date().toISOString(),
+        eventType: isSnapshot ? 'snapshot' : 'update',
+        balances: balances,
+        changes: []
+      };
 
-    // Send log to API if enabled - only for snapshots, not for individual updates
-    // Note: Snapshots are not sent to API as they don't match the expected event format
-    // Only individual deposit and sale events are logged
+      for (const [asset, amount] of Object.entries(balances)) {
+        const oldAmount = parseFloat(this.currentBalances[asset] || 0);
+        const newAmount = parseFloat(amount);
+        const changed = oldAmount !== newAmount;
+
+        if (changed) {
+          changes.push({ asset, oldAmount, newAmount });
+          
+          if (isSnapshot) {
+            logger.debug(`Processing balance for ${asset} (converted: ${convertAssetName(asset)})`, {
+              asset,
+              convertedAsset: convertAssetName(asset),
+              oldAmount,
+              newAmount,
+              changed
+            });
+          }
+
+          await this.processBalanceChange(asset, oldAmount, newAmount, isSnapshot, logData, updateInfo);
+        }
+      }
+
+      // Update current balances
+      this.currentBalances = { ...balances };
+
+      if (isSnapshot) {
+        logger.info('Balance snapshot processed:', {
+          changeCount: changes.length,
+          changes
+        });
+        
+        for (const change of changes) {
+          logger.info(`  ${change.asset}: ${change.oldAmount} -> ${change.newAmount}`);
+        }
+      }
+
+      // Send log to API if enabled - only for snapshots, not for individual updates
+      // Note: Snapshots are not sent to API as they don't match the expected event format
+      // Only individual deposit and sale events are logged
+    } catch (error) {
+      logger.error('Error in handleBalanceUpdate', {
+        error: error.message,
+        stack: error.stack,
+        isSnapshot,
+        updateType: updateInfo?.type
+      });
+      throw error; // Re-throw to ensure caller knows about the error
+    } finally {
+      // Always release the processing lock
+      this.isProcessingBalance = false;
+    }
   }
 
   // Process individual balance changes
