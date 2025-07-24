@@ -310,7 +310,26 @@ class KrakenService {
 
   // Get minimum order size for an asset
   getMinimumOrderSize(asset) {
-    return this.minimumOrderSizes[asset] || 0.001; // Reasonable default if not found
+    const storedMinimum = this.minimumOrderSizes[asset];
+    if (storedMinimum) {
+      return storedMinimum;
+    }
+    
+    // Asset-specific fallbacks based on common Kraken minimums
+    const assetSpecificMinimums = {
+      'BTC': 0.0001,
+      'ETH': 0.001,
+      'DOGE': 1,
+      'SOL': 0.01,
+      'XRP': 1,
+      'LTC': 0.01,
+      'ADA': 1,
+      'DOT': 0.1,
+      'LINK': 0.1,
+      'UNI': 0.1
+    };
+    
+    return assetSpecificMinimums[asset] || 0.001; // Generic fallback
   }
 
   // Check if asset has a market pair

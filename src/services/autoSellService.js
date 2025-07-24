@@ -137,8 +137,8 @@ class AutoSellService {
           logger.error('Failed to send deposit log to API', { error: err.message });
         }
       }
-      // Try to process a sale (may or may not trigger)
-      saleTriggered = await this.processBalance(convertedAsset, depositAmount);
+      // Try to process a sale of the total balance (not just the deposit)
+      saleTriggered = await this.processBalance(convertedAsset, newAmount);
       // If a sale was triggered, log the sale event (handled in processBalance)
       return;
     }
@@ -228,60 +228,90 @@ class AutoSellService {
       });
     }
 
-    // Place sell order
-    try {
-      const pair = krakenService.getMarketPair(asset);
-      const order = await krakenService.placeMarketSellOrder(pair, totalAmount);
-      logger.info(`Market sell order placed for ${asset}`, {
-        asset,
-        amount: totalAmount,
-        pair,
-        txid: order.txid
-      });
-      // Log the sale event (do not crash on error)
-      if (config.logging.api.enabled) {
-        try {
-          await sendLogToApi({
-            eventType: 'sale',
-            timestamp: new Date().toISOString(),
-            asset,
-            amount: totalAmount,
-            pair,
-            txid: order.txid
-          });
-        } catch (err) {
-          logger.error('Failed to send sale log to API', { error: err.message });
+    // Place sell order with retry logic
+    const maxRetries = 3;
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const pair = krakenService.getMarketPair(asset);
+        const order = await krakenService.placeMarketSellOrder(pair, totalAmount);
+        logger.info(`Market sell order placed for ${asset}`, {
+          asset,
+          amount: totalAmount,
+          pair,
+          txid: order.txid,
+          attempt
+        });
+        
+        // Log the sale event (do not crash on error)
+        if (config.logging.api.enabled) {
+          try {
+            await sendLogToApi({
+              eventType: 'sale',
+              timestamp: new Date().toISOString(),
+              asset,
+              amount: totalAmount,
+              pair,
+              txid: order.txid
+            });
+          } catch (err) {
+            logger.error('Failed to send sale log to API', { error: err.message });
+          }
         }
-      }
-      // Monitor order status
-      setTimeout(async () => {
-        try {
-          const orderStatus = await krakenService.getOrderStatus(order.txid);
-          if (orderStatus) {
-            logger.info(`Order ${order.txid} status updated`, {
-              status: orderStatus.status,
-              usdValue: orderStatus.usdValue,
-              volume: orderStatus.volume,
-              fee: orderStatus.fee
+        
+        // Monitor order status
+        setTimeout(async () => {
+          try {
+            const orderStatus = await krakenService.getOrderStatus(order.txid);
+            if (orderStatus) {
+              logger.info(`Order ${order.txid} status updated`, {
+                status: orderStatus.status,
+                usdValue: orderStatus.usdValue,
+                volume: orderStatus.volume,
+                fee: orderStatus.fee
+              });
+              
+              // If order was partially filled, try to sell remaining balance
+              if (orderStatus.status === 'closed' && orderStatus.volume < totalAmount) {
+                const remainingAmount = totalAmount - orderStatus.volume;
+                logger.info(`Order partially filled, attempting to sell remaining ${remainingAmount} ${asset}`);
+                setTimeout(() => this.processBalance(asset, remainingAmount), 2000);
+              }
+            }
+          } catch (err) {
+            logger.warn(`Could not get order status for ${order.txid}`, {
+              error: err.message,
+              txid: order.txid
             });
           }
-        } catch (err) {
-          logger.warn(`Could not get order status for ${order.txid}`, {
-            error: err.message,
-            txid: order.txid
-          });
+        }, 5000);
+        
+        return true;
+      } catch (err) {
+        lastError = err;
+        logger.warn(`Failed to place sell order for ${asset} (attempt ${attempt}/${maxRetries})`, {
+          asset,
+          amount: totalAmount,
+          error: err.message,
+          attempt,
+          maxRetries
+        });
+        
+        if (attempt < maxRetries) {
+          // Wait before retry (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
         }
-      }, 5000);
-      return true;
-    } catch (err) {
-      logger.error(`Failed to place sell order for ${asset}`, {
-        asset,
-        amount: totalAmount,
-        error: err.message,
-        stack: err.stack
-      });
-      return false;
+      }
     }
+    
+    logger.error(`Failed to place sell order for ${asset} after ${maxRetries} attempts`, {
+      asset,
+      amount: totalAmount,
+      error: lastError.message,
+      stack: lastError.stack
+    });
+    return false;
   }
 
   // Handle deposit events from WebSocket
