@@ -220,6 +220,8 @@ class AutoSellService {
       return false;
     }
 
+
+
     // Check if there's a market pair
     if (!krakenService.hasMarketPair(asset)) {
       logger.warn(`No market for ${asset}`, { 
