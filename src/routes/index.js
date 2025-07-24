@@ -5,6 +5,7 @@ const autoSellController = require('../controllers/autoSellController');
 const autoSellService = require('../services/autoSellService');
 const krakenService = require('../services/krakenService');
 const logger = require('../utils/logger');
+const { validateAsset, handleValidationError } = require('../utils/validation');
 const docsRouter = require('./docs');
 
 // Health check
@@ -19,7 +20,7 @@ router.get('/health', (req, res) => {
 // Debug endpoint to check BTC balance
 router.get('/debug/balance/:asset', async (req, res) => {
   try {
-    const { asset } = req.params;
+    const asset = validateAsset(req.params.asset);
     const balanceInfo = await krakenService.checkBalanceForAsset(asset);
     res.json({
       asset,
@@ -27,15 +28,19 @@ router.get('/debug/balance/:asset', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('Error in debug balance endpoint:', error);
-    res.status(500).json({ error: error.message });
+    if (error.message.includes('Asset parameter') || error.message.includes('Invalid')) {
+      handleValidationError(error, req, res);
+    } else {
+      logger.error('Error in debug balance endpoint:', error);
+      res.status(500).json({ error: error.message });
+    }
   }
 });
 
 // Debug endpoint to check available pairs for an asset
 router.get('/debug/pairs/:asset', async (req, res) => {
   try {
-    const { asset } = req.params;
+    const asset = validateAsset(req.params.asset);
     const pairs = krakenService.getTradablePairs();
     const assetPairs = pairs.filter(p => p.includes(asset));
     const hasMarketPair = krakenService.hasMarketPair(asset);
@@ -50,8 +55,12 @@ router.get('/debug/pairs/:asset', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('Error in debug pairs endpoint:', error);
-    res.status(500).json({ error: error.message });
+    if (error.message.includes('Asset parameter') || error.message.includes('Invalid')) {
+      handleValidationError(error, req, res);
+    } else {
+      logger.error('Error in debug pairs endpoint:', error);
+      res.status(500).json({ error: error.message });
+    }
   }
 });
 
@@ -71,7 +80,7 @@ router.get('/auto-sell/balances', (req, res) => {
 // Get current balance for a specific asset
 router.get('/balance/:asset', async (req, res) => {
   try {
-    const { asset } = req.params;
+    const asset = validateAsset(req.params.asset);
     const currentBalances = autoSellService.getCurrentBalances();
     
     // Try to find the asset in current balances (case-insensitive)
@@ -98,17 +107,17 @@ router.get('/balance/:asset', async (req, res) => {
       hasBalance: balanceValue > 0,
       timestamp: new Date().toISOString()
     });
-    
   } catch (error) {
-    logger.error('Error in balance endpoint:', error);
-    res.status(500).json({ 
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
+    if (error.message.includes('Asset parameter') || error.message.includes('Invalid')) {
+      handleValidationError(error, req, res);
+    } else {
+      logger.error('Error in balance endpoint:', error);
+      res.status(500).json({ error: error.message });
+    }
   }
 });
 
-// API Documentation routes
-router.use('/', docsRouter);
+// API documentation
+router.use('/docs', docsRouter);
 
 module.exports = router; 

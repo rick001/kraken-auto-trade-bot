@@ -1,13 +1,13 @@
 const krakenService = require('../services/krakenService');
 const { formatTradeData } = require('../utils/helpers');
+const { validateTxid, validateTxidArray, handleValidationError } = require('../utils/validation');
+const logger = require('../utils/logger');
 
 // Get details for a single trade/order by transaction ID
 exports.getTrade = async (req, res) => {
   try {
-    const { txid } = req.params;
-    if (!txid) {
-      return res.status(400).json({ error: 'Missing txid parameter' });
-    }
+    const txid = validateTxid(req.params.txid);
+    
     // Fetch order status
     const orderResp = await krakenService.kraken.api('QueryOrders', { txid, trades: true });
     const order = orderResp.result[txid];
@@ -23,20 +23,20 @@ exports.getTrade = async (req, res) => {
     const tradeData = formatTradeData(order, trades, txid);
     res.json(tradeData);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch trade details', message: error.message });
+    if (error.message.includes('Transaction ID') || error.message.includes('Invalid')) {
+      handleValidationError(error, req, res);
+    } else {
+      logger.error('Error in getTrade:', error);
+      res.status(500).json({ error: 'Failed to fetch trade details', message: error.message });
+    }
   }
 };
 
 // Get details for multiple trades/orders by transaction IDs
 exports.getBatchTrades = async (req, res) => {
   try {
-    const { txids } = req.body;
-    if (!Array.isArray(txids) || txids.length === 0) {
-      return res.status(400).json({ error: 'Invalid request', message: 'txids must be a non-empty array' });
-    }
-    if (txids.length > 20) {
-      return res.status(400).json({ error: 'Invalid request', message: 'Maximum 20 txids per request' });
-    }
+    const txids = validateTxidArray(req.body.txids);
+    
     const results = {};
     for (const txid of txids) {
       try {
@@ -58,6 +58,11 @@ exports.getBatchTrades = async (req, res) => {
     }
     res.json(results);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to process batch request', message: error.message });
+    if (error.message.includes('Transaction ID') || error.message.includes('Invalid') || error.message.includes('array')) {
+      handleValidationError(error, req, res);
+    } else {
+      logger.error('Error in getBatchTrades:', error);
+      res.status(500).json({ error: 'Failed to process batch request', message: error.message });
+    }
   }
 }; 
