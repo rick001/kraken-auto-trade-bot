@@ -6,13 +6,13 @@ const autoSellService = require('../services/autoSellService');
 const krakenService = require('../services/krakenService');
 const logger = require('../utils/logger');
 const { validateAsset, handleValidationError } = require('../utils/validation');
+const { sendErrorResponse, sendSuccessResponse, createNotFoundError, createInternalError } = require('../utils/errorHandler');
 const docsRouter = require('./docs');
 
 // Health check
 router.get('/health', (req, res) => {
-  res.json({
+  sendSuccessResponse(res, {
     status: 'ok',
-    timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
 });
@@ -22,17 +22,22 @@ router.get('/debug/balance/:asset', async (req, res) => {
   try {
     const asset = validateAsset(req.params.asset);
     const balanceInfo = await krakenService.checkBalanceForAsset(asset);
-    res.json({
+    sendSuccessResponse(res, {
       asset,
-      balanceInfo,
-      timestamp: new Date().toISOString()
+      balanceInfo
     });
   } catch (error) {
-    if (error.message.includes('Asset parameter') || error.message.includes('Invalid')) {
+    if (error.type === 'Validation Error') {
       handleValidationError(error, req, res);
     } else {
-      logger.error('Error in debug balance endpoint:', error);
-      res.status(500).json({ error: error.message });
+      const internalError = createInternalError('Failed to check balance for asset', error.message);
+      sendErrorResponse(res, internalError, {
+        endpoint: req.path,
+        method: req.method,
+        userAgent: req.get('User-Agent'),
+        ip: req.ip,
+        params: req.params
+      });
     }
   }
 });
@@ -46,20 +51,25 @@ router.get('/debug/pairs/:asset', async (req, res) => {
     const hasMarketPair = krakenService.hasMarketPair(asset);
     const marketPair = krakenService.getMarketPair(asset);
     
-    res.json({
+    sendSuccessResponse(res, {
       asset,
       hasMarketPair,
       marketPair,
       availablePairs: assetPairs,
-      totalPairs: pairs.length,
-      timestamp: new Date().toISOString()
+      totalPairs: pairs.length
     });
   } catch (error) {
-    if (error.message.includes('Asset parameter') || error.message.includes('Invalid')) {
+    if (error.type === 'Validation Error') {
       handleValidationError(error, req, res);
     } else {
-      logger.error('Error in debug pairs endpoint:', error);
-      res.status(500).json({ error: error.message });
+      const internalError = createInternalError('Failed to check pairs for asset', error.message);
+      sendErrorResponse(res, internalError, {
+        endpoint: req.path,
+        method: req.method,
+        userAgent: req.get('User-Agent'),
+        ip: req.ip,
+        params: req.params
+      });
     }
   }
 });
@@ -68,13 +78,17 @@ router.get('/debug/pairs/:asset', async (req, res) => {
 router.get('/debug/rate-limiter', (req, res) => {
   try {
     const rateLimiterStatus = krakenService.rateLimiter.getStatus();
-    res.json({
-      rateLimiter: rateLimiterStatus,
-      timestamp: new Date().toISOString()
+    sendSuccessResponse(res, {
+      rateLimiter: rateLimiterStatus
     });
   } catch (error) {
-    logger.error('Error in debug rate limiter endpoint:', error);
-    res.status(500).json({ error: error.message });
+    const internalError = createInternalError('Failed to get rate limiter status', error.message);
+    sendErrorResponse(res, internalError, {
+      endpoint: req.path,
+      method: req.method,
+      userAgent: req.get('User-Agent'),
+      ip: req.ip
+    });
   }
 });
 
@@ -85,9 +99,8 @@ router.post('/trades/batch', tradeController.getBatchTrades);
 // Auto-sell routes
 router.get('/auto-sell/status', autoSellController.getStatus);
 router.get('/auto-sell/balances', (req, res) => {
-  res.json({
-    balances: autoSellService.getCurrentBalances(),
-    timestamp: new Date().toISOString()
+  sendSuccessResponse(res, {
+    balances: autoSellService.getCurrentBalances()
   });
 });
 
@@ -103,30 +116,40 @@ router.get('/balance/:asset', async (req, res) => {
     );
     
     if (!assetKey) {
-      return res.status(404).json({
-        error: 'Asset not found',
-        asset: asset,
-        availableAssets: Object.keys(currentBalances),
-        timestamp: new Date().toISOString()
+      const notFoundError = createNotFoundError('Asset not found', { 
+        asset, 
+        availableAssets: Object.keys(currentBalances) 
+      });
+      return sendErrorResponse(res, notFoundError, {
+        endpoint: req.path,
+        method: req.method,
+        userAgent: req.get('User-Agent'),
+        ip: req.ip,
+        params: req.params
       });
     }
     
     const balance = currentBalances[assetKey];
     const balanceValue = parseFloat(balance) || 0;
     
-    res.json({
+    sendSuccessResponse(res, {
       asset: assetKey,
       balance: balance,
       balanceValue: balanceValue,
-      hasBalance: balanceValue > 0,
-      timestamp: new Date().toISOString()
+      hasBalance: balanceValue > 0
     });
   } catch (error) {
-    if (error.message.includes('Asset parameter') || error.message.includes('Invalid')) {
+    if (error.type === 'Validation Error') {
       handleValidationError(error, req, res);
     } else {
-      logger.error('Error in balance endpoint:', error);
-      res.status(500).json({ error: error.message });
+      const internalError = createInternalError('Failed to get balance for asset', error.message);
+      sendErrorResponse(res, internalError, {
+        endpoint: req.path,
+        method: req.method,
+        userAgent: req.get('User-Agent'),
+        ip: req.ip,
+        params: req.params
+      });
     }
   }
 });
