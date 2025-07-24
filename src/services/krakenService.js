@@ -320,23 +320,30 @@ class KrakenService {
     const pairAsset = this.getPairName(asset);
     const pairQuote = this.getPairName(config.kraken.targetFiat);
     
+    // Prioritize USD pairs over USDT pairs when target is USD
     const pairNames = [
+      // First priority: Direct target currency pairs
       `${asset}${config.kraken.targetFiat}`, // SOLUSD
-      `${asset}USD`, // SOLUSD (most common)
-      `${asset}USDT`, // SOLUSDT (alternative)
-      `${asset}USDC`, // SOLUSDC (alternative)
       `${pairAsset}${config.kraken.targetFiat}`, // XDGUSD (for DOGE)
-      `${pairAsset}USD`, // XDGUSD (for DOGE)
-      `${pairAsset}USDT`, // XDGUSDT (for DOGE)
-      `${pairAsset}USDC`, // XDGUSDC (for DOGE)
-      `${pairAsset}${pairQuote}`, // XDGUSD (for DOGE with converted USD)
       `${asset}${pairQuote}`, // DOGEUSD (for DOGE with converted USD)
+      `${pairAsset}${pairQuote}`, // XDGUSD (for DOGE with converted USD)
+      
+      // Second priority: Standard USD pairs (most common)
+      `${asset}USD`, // SOLUSD
+      `${pairAsset}USD`, // XDGUSD (for DOGE)
+      
+      // Third priority: Alternative stablecoins (only if target is not USD)
+      ...(config.kraken.targetFiat !== 'USD' ? [
+        `${asset}USDT`, // SOLUSDT (alternative)
+        `${asset}USDC`, // SOLUSDC (alternative)
+        `${pairAsset}USDT`, // XDGUSDT (for DOGE)
+        `${pairAsset}USDC`, // XDGUSDC (for DOGE)
+      ] : []),
+      
       // Special handling for USDT
-      ...(asset === 'USDT' ? ['USDTUSD', 'USDTUSDC', 'USDTUSDT'] : []),
+      ...(asset === 'USDT' ? ['USDTUSD', 'USDTUSDC', 'USDTUSDT', 'USDTZUSD'] : []),
       // Special handling for USDC
-      ...(asset === 'USDC' ? ['USDCUSD', 'USDCUSDT', 'USDCUSDC'] : []),
-      // Special handling for USDTZUSD
-      ...(asset === 'USDT' ? ['USDTZUSD'] : [])
+      ...(asset === 'USDC' ? ['USDCUSD', 'USDCUSDT', 'USDCUSDC'] : [])
     ];
     
     const hasPair = pairNames.some(pairName => !!this.pairs[pairName]);
@@ -362,17 +369,26 @@ class KrakenService {
     const pairAsset = this.getPairName(asset);
     const pairQuote = this.getPairName(config.kraken.targetFiat);
     
+    // Prioritize USD pairs over USDT pairs when target is USD
     const pairNames = [
+      // First priority: Direct target currency pairs
       `${asset}${config.kraken.targetFiat}`, // SOLUSD
-      `${asset}USD`, // SOLUSD (most common)
-      `${asset}USDT`, // SOLUSDT (alternative)
-      `${asset}USDC`, // SOLUSDC (alternative)
       `${pairAsset}${config.kraken.targetFiat}`, // XDGUSD (for DOGE)
-      `${pairAsset}USD`, // XDGUSD (for DOGE)
-      `${pairAsset}USDT`, // XDGUSDT (for DOGE)
-      `${pairAsset}USDC`, // XDGUSDC (for DOGE)
-      `${pairAsset}${pairQuote}`, // XDGUSD (for DOGE with converted USD)
       `${asset}${pairQuote}`, // DOGEUSD (for DOGE with converted USD)
+      `${pairAsset}${pairQuote}`, // XDGUSD (for DOGE with converted USD)
+      
+      // Second priority: Standard USD pairs (most common)
+      `${asset}USD`, // SOLUSD
+      `${pairAsset}USD`, // XDGUSD (for DOGE)
+      
+      // Third priority: Alternative stablecoins (only if target is not USD)
+      ...(config.kraken.targetFiat !== 'USD' ? [
+        `${asset}USDT`, // SOLUSDT (alternative)
+        `${asset}USDC`, // SOLUSDC (alternative)
+        `${pairAsset}USDT`, // XDGUSDT (for DOGE)
+        `${pairAsset}USDC`, // XDGUSDC (for DOGE)
+      ] : []),
+      
       // Special handling for USDT
       ...(asset === 'USDT' ? ['USDTUSD', 'USDTUSDC', 'USDTUSDT', 'USDTZUSD'] : []),
       // Special handling for USDC
@@ -380,6 +396,17 @@ class KrakenService {
     ];
     
     const foundPair = pairNames.find(pairName => !!this.pairs[pairName]);
+    
+    // Log the found pair for debugging
+    if (foundPair) {
+      logger.debug(`Found market pair for ${asset}: ${foundPair}`, {
+        asset,
+        targetFiat: config.kraken.targetFiat,
+        foundPair,
+        availablePairs: Object.keys(this.pairs).filter(p => p.includes(asset) || p.includes(pairAsset)).slice(0, 5)
+      });
+    }
+    
     return foundPair || null;
   }
 
