@@ -157,4 +157,9 @@ router.get('/balance/:asset', async (req, res) => {
 // API documentation
 router.use('/docs', docsRouter);
 
+// Redirect /docs/ to /docs (handle trailing slash)
+router.get('/docs/', (req, res) => {
+  res.redirect('/api/docs');
+});
+
 module.exports = router; 

@@ -14,19 +14,6 @@ app.use(express.json());
 // API routes
 app.use('/api', apiRouter);
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    environment: config.server.environment,
-    kraken: {
-      sandbox: config.kraken.sandbox,
-      endpoints: config.kraken.endpoints
-    }
-  });
-});
-
 // 404 handler
 app.use((req, res) => {
   const notFoundError = createNotFoundError('Endpoint not found', { 

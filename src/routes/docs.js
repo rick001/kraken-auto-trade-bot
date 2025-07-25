@@ -327,7 +327,9 @@ const swaggerDocument = {
 };
 
 // Serve Swagger UI and OpenAPI JSON
-router.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+router.use('/', swaggerUi.serve);
+router.get('/', swaggerUi.setup(swaggerDocument));
+router.get('/docs', swaggerUi.setup(swaggerDocument));
 router.get('/openapi.json', (req, res) => res.json(swaggerDocument));
 
 module.exports = router; 
