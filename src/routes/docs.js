@@ -298,6 +298,83 @@ const swaggerDocument = {
         }
       }
     },
+    '/api/': {
+      get: {
+        summary: 'API Overview',
+        description: 'Returns an overview of all available API endpoints and their descriptions.',
+        responses: {
+          200: {
+            description: 'API overview retrieved successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    message: { type: 'string' },
+                    version: { type: 'string' },
+                    description: { type: 'string' },
+                    availableEndpoints: { type: 'array' },
+                    documentation: { type: 'string' }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/api/trades/': {
+      get: {
+        summary: 'Trade Endpoints Overview',
+        description: 'Returns information about available trade-related endpoints.',
+        responses: {
+          200: {
+            description: 'Trade endpoints overview retrieved successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    message: { type: 'string' },
+                    availableEndpoints: { type: 'array' }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    '/api/auto-sell/': {
+      get: {
+        summary: 'Auto-Sell Endpoints Overview',
+        description: 'Returns information about available auto-sell service endpoints and current status.',
+        responses: {
+          200: {
+            description: 'Auto-sell endpoints overview retrieved successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    message: { type: 'string' },
+                    availableEndpoints: { type: 'array' },
+                    currentStatus: {
+                      type: 'object',
+                      properties: {
+                        running: { type: 'boolean' },
+                        initialProcessingComplete: { type: 'boolean' },
+                        websocketConnected: { type: 'boolean' }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     '/api/docs': {
       get: {
         summary: 'API Documentation (Swagger UI)',
@@ -328,8 +405,11 @@ const swaggerDocument = {
 
 // Serve Swagger UI and OpenAPI JSON
 router.use('/', swaggerUi.serve);
-router.get('/', swaggerUi.setup(swaggerDocument));
-router.get('/docs', swaggerUi.setup(swaggerDocument));
+router.get('/', swaggerUi.setup(swaggerDocument, {
+  explorer: true,
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'Kraken Auto-Trade Bot API Documentation'
+}));
 router.get('/openapi.json', (req, res) => res.json(swaggerDocument));
 
 module.exports = router; 
