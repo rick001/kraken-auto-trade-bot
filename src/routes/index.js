@@ -17,6 +17,53 @@ router.get('/health', (req, res) => {
   });
 });
 
+// Root API endpoint - provide overview
+router.get('/', (req, res) => {
+  sendSuccessResponse(res, {
+    message: 'Kraken Auto-Trade Bot API',
+    version: '1.0.0',
+    description: 'Unified API for Kraken auto-sell service and trade details',
+    availableEndpoints: [
+      {
+        path: '/api/health',
+        method: 'GET',
+        description: 'Health check endpoint'
+      },
+      {
+        path: '/api/trades/{txid}',
+        method: 'GET',
+        description: 'Get trade details by transaction ID'
+      },
+      {
+        path: '/api/trades/batch',
+        method: 'POST',
+        description: 'Get multiple trade details'
+      },
+      {
+        path: '/api/auto-sell/status',
+        method: 'GET',
+        description: 'Get auto-sell service status'
+      },
+      {
+        path: '/api/auto-sell/balances',
+        method: 'GET',
+        description: 'Get current balances'
+      },
+      {
+        path: '/api/balance/{asset}',
+        method: 'GET',
+        description: 'Get balance for specific asset'
+      },
+      {
+        path: '/api/docs',
+        method: 'GET',
+        description: 'Interactive API documentation'
+      }
+    ],
+    documentation: '/api/docs'
+  });
+});
+
 // Debug endpoint to check BTC balance
 router.get('/debug/balance/:asset', async (req, res) => {
   try {
@@ -96,11 +143,54 @@ router.get('/debug/rate-limiter', (req, res) => {
 router.get('/trades/:txid', tradeController.getTrade);
 router.post('/trades/batch', tradeController.getBatchTrades);
 
+// Handle trades endpoint with trailing slash
+router.get('/trades/', (req, res) => {
+  sendSuccessResponse(res, {
+    message: 'Trade endpoints',
+    availableEndpoints: [
+      {
+        path: '/api/trades/{txid}',
+        method: 'GET',
+        description: 'Get details for a specific trade by transaction ID'
+      },
+      {
+        path: '/api/trades/batch',
+        method: 'POST',
+        description: 'Get details for multiple trades by transaction IDs'
+      }
+    ]
+  });
+});
+
 // Auto-sell routes
 router.get('/auto-sell/status', autoSellController.getStatus);
 router.get('/auto-sell/balances', (req, res) => {
   sendSuccessResponse(res, {
     balances: autoSellService.getCurrentBalances()
+  });
+});
+
+// Handle auto-sell endpoint with trailing slash
+router.get('/auto-sell/', (req, res) => {
+  sendSuccessResponse(res, {
+    message: 'Auto-sell service endpoints',
+    availableEndpoints: [
+      {
+        path: '/api/auto-sell/status',
+        method: 'GET',
+        description: 'Get auto-sell service status and current balances'
+      },
+      {
+        path: '/api/auto-sell/balances',
+        method: 'GET',
+        description: 'Get current account balances'
+      }
+    ],
+    currentStatus: {
+      running: true,
+      initialProcessingComplete: autoSellService.isInitialProcessingComplete(),
+      websocketConnected: require('../services/websocketService').isConnected()
+    }
   });
 });
 
